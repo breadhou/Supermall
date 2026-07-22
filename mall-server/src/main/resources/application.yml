@@ -1,26 +1,94 @@
+# ============================================================
+# 电商平台 - 应用配置
+# ============================================================
+
 server:
   port: 8080
 
+# ==================== 数据库 ====================
 spring:
   datasource:
+    # JDBC 连接。mall 是数据库名，需先在 MySQL 中 CREATE DATABASE mall
     url: jdbc:mysql://localhost:3306/mall?useUnicode=true&characterEncoding=utf-8&serverTimezone=Asia/Shanghai
     username: root
-    password: your_password
+    password: 123456
     driver-class-name: com.mysql.cj.jdbc.Driver
+    # HikariCP 连接池（Spring Boot 默认，无需额外依赖）
+    hikari:
+      minimum-idle: 5                # 最小空闲连接
+      maximum-pool-size: 20          # 最大连接数
+      idle-timeout: 300000           # 空闲超时（ms）
+      max-lifetime: 1200000          # 连接最大存活时间（ms）
+      connection-timeout: 30000      # 获取连接超时（ms）
+
+  # ==================== Redis ====================
   data:
     redis:
       host: localhost
       port: 6379
+      # password:                   # Redis 没设密码就注释掉
+      lettuce:                      # Lettuce 客户端（Spring Boot 3.x 默认）
+        pool:
+          max-active: 16            # 最大活跃连接
+          max-idle: 8               # 最大空闲连接
+          min-idle: 4               # 最小空闲连接
+
+  # ==================== RabbitMQ ====================
   rabbitmq:
     host: localhost
     port: 5672
-    username: guest
+    username: guest                 # RabbitMQ 默认管理员
     password: guest
+    # 生产者确认：消息是否成功到达交换机
+    publisher-confirm-type: correlated
+    # 消息是否成功到达队列
+    publisher-returns: true
+    listener:
+      simple:
+        acknowledge-mode: manual    # 手动确认（消费者自己决定 ack/nack）
+        prefetch: 1                 # 每次只取一条消息，公平分发
+        retry:
+          enabled: true             # 消费失败自动重试
+          max-attempts: 3           # 最多重试 3 次
+          initial-interval: 1000    # 首次重试间隔 1s
 
+# ==================== MyBatis-Plus ====================
 mybatis-plus:
+  # mapper XML 文件位置
+  mapper-locations: classpath*:/mapper/**/*.xml
+  # 实体类包路径
+  type-aliases-package: com.mall.module.*.entity
   configuration:
+    # 数据库列名 user_id → Java 属性 userId（自动下划线转驼峰）
     map-underscore-to-camel-case: true
+    # 开发阶段打印 SQL，上线后改掉
     log-impl: org.apache.ibatis.logging.stdout.StdOutImpl
+  global-config:
+    db-config:
+      # 逻辑删除字段名
+      logic-delete-field: deleted
+      # 未删除值
+      logic-not-delete-value: 0
+      # 已删除值
+      logic-delete-value: 1
 
+# ==================== Knife4j（API 文档） ====================
 knife4j:
   enable: true
+  setting:
+    enable-swagger-models: true     # 显示请求参数模型
+
+springdoc:
+  swagger-ui:
+    path: /swagger-ui.html          # Swagger UI 访问路径
+  api-docs:
+    path: /v3/api-docs             # API 元数据路径
+
+# ==================== 日志 ====================
+logging:
+  level:
+    root: info                      # 全局日志级别
+    com.mall: debug                 # 项目代码用 debug，看到更多细节
+  pattern:
+    # 控制台日志格式
+    console: "%d{yyyy-MM-dd HH:mm:ss} [%thread] %-5level %logger{36} - %msg%n"
