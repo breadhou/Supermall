@@ -1,4 +1,4 @@
-package com.mall.module.user.entity;
+package com.mall.module.user.entity.po;
 
 import com.baomidou.mybatisplus.annotation.IdType;
 import com.baomidou.mybatisplus.annotation.TableId;

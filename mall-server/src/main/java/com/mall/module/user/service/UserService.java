@@ -1,8 +1,8 @@
 package com.mall.module.user.service;
 
-import com.mall.module.user.entity.LoginDTO;
-import com.mall.module.user.entity.LoginVO;
-import com.mall.module.user.entity.RegisterDTO;
+import com.mall.module.user.entity.dto.LoginDTO;
+import com.mall.module.user.entity.vo.LoginVO;
+import com.mall.module.user.entity.dto.RegisterDTO;
 
 public interface UserService {
 

@@ -1,9 +1,8 @@
-package com.mall.module.user.entity;
+package com.mall.module.user.entity.po;
 
 import com.baomidou.mybatisplus.annotation.IdType;
 import com.baomidou.mybatisplus.annotation.TableId;
 import com.baomidou.mybatisplus.annotation.TableName;
-import com.mall.common.enums.UserStatus;
 import lombok.Data;
 import lombok.experimental.Accessors;
 
@@ -14,7 +13,7 @@ import java.time.LocalDateTime;
 @Accessors(chain = true)
 public class Address {
 
-    @TableId(type = IdType.NONE)
+    @TableId(type = IdType.ASSIGN_ID)
     private Long id;
     private Long userId;
     private String receiver;
@@ -23,7 +22,7 @@ public class Address {
     private String city;
     private String district;
     private String detail;
-    private UserStatus isDefault;
+    private Integer isDefault;
     private LocalDateTime createdAt;
 
 }

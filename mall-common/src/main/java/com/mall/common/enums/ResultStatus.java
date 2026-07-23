@@ -18,7 +18,7 @@ public enum ResultStatus {
      */
     REGISTER_SUCCESS(20000, "注册成功!"),
     REGISTER_FAIL(200001, "注册失败!"),
-    VERIFY_FAIL(200002, "验证码不一致!"),
+    USER_BANNED(200003,"用户被禁用!"),
 
     /**
      * check

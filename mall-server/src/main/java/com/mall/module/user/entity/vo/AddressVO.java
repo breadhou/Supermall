@@ -1,6 +1,5 @@
-package com.mall.module.user.entity;
+package com.mall.module.user.entity.vo;
 
-import com.mall.common.enums.UserStatus;
 import lombok.Data;
 
 @Data
@@ -14,6 +13,6 @@ public class AddressVO {
     private String city;
     private String district;
     private String detail;
-    private UserStatus isDefault;
+    private Integer isDefault;
 
 }

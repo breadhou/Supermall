@@ -1,4 +1,4 @@
-package com.mall.module.user.entity;
+package com.mall.module.user.entity.vo;
 
 import lombok.Data;
 

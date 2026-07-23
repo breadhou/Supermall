@@ -1,6 +1,5 @@
-package com.mall.module.user.entity;
+package com.mall.module.user.entity.dto;
 
-import com.mall.common.enums.UserStatus;
 import jakarta.validation.constraints.NotBlank;
 import lombok.Data;
 
@@ -25,6 +24,6 @@ public class AddressDTO {
     @NotBlank
     private String detail;
 
-    private UserStatus isDefault;
+    private Integer isDefault;
 
 }

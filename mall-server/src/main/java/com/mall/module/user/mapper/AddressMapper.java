@@ -1,7 +1,7 @@
 package com.mall.module.user.mapper;
 
 import com.baomidou.mybatisplus.core.mapper.BaseMapper;
-import com.mall.module.user.entity.Address;
+import com.mall.module.user.entity.po.Address;
 import org.apache.ibatis.annotations.Mapper;
 
 @Mapper
