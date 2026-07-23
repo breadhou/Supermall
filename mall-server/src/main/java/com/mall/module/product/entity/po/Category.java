@@ -1,4 +1,4 @@
-package com.mall.module.user.entity.po;
+package com.mall.module.product.entity.po;
 
 import com.baomidou.mybatisplus.annotation.IdType;
 import com.baomidou.mybatisplus.annotation.TableId;
@@ -9,20 +9,16 @@ import lombok.experimental.Accessors;
 import java.time.LocalDateTime;
 
 @Data
-@TableName("address")
+@TableName("category")
 @Accessors(chain = true)
-public class Address {
+public class Category {
 
     @TableId(type = IdType.ASSIGN_ID)
     private Long id;
-    private Long userId;
-    private String receiver;
-    private String phone;
-    private String province;
-    private String city;
-    private String district;
-    private String detail;
-    private Boolean isDefault;
+    private String name;
+    private Long parentId;
+    private Integer level;
+    private Integer sort;
     private LocalDateTime createdAt;
 
 }

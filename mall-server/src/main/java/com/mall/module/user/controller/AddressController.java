@@ -3,7 +3,9 @@ package com.mall.module.user.controller;
 import com.mall.common.result.Result;
 import com.mall.module.user.entity.dto.AddressDTO;
 import com.mall.module.user.entity.vo.AddressVO;
+import com.mall.module.user.service.AddressService;
 import jakarta.validation.Valid;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
@@ -12,27 +14,38 @@ import java.util.List;
 @RequestMapping("/api/user")
 public class AddressController {
 
+    @Autowired
+    private AddressService addressService;
+
     @GetMapping("/address")
     public Result<List<AddressVO>> listAddresses() {
-        // TODO 阶段二：实现地址列表查询
-        throw new UnsupportedOperationException("listAddresses not implemented yet");
+        List<AddressVO> list = addressService.listAddresses();
+        Result<List<AddressVO>> result = Result.build();
+        result.success(list);
+        return result;
     }
 
     @PostMapping("/address")
     public Result<AddressVO> addAddress(@Valid @RequestBody AddressDTO dto) {
-        // TODO 阶段二：实现新增地址
-        throw new UnsupportedOperationException("addAddress not implemented yet");
+        AddressVO vo = addressService.addAddress(dto);
+        Result<AddressVO> result = Result.build();
+        result.success(vo);
+        return result;
     }
 
     @PutMapping("/address/{id}")
     public Result<AddressVO> updateAddress(@PathVariable Long id, @Valid @RequestBody AddressDTO dto) {
-        // TODO 阶段二：实现修改地址
-        throw new UnsupportedOperationException("updateAddress not implemented yet");
+        AddressVO vo = addressService.updateAddress(id, dto);
+        Result<AddressVO> result = Result.build();
+        result.success(vo);
+        return result;
     }
 
     @DeleteMapping("/address/{id}")
     public Result<Void> deleteAddress(@PathVariable Long id) {
-        // TODO 阶段二：实现删除地址
-        throw new UnsupportedOperationException("deleteAddress not implemented yet");
+        addressService.deleteAddress(id);
+        Result<Void> result = Result.build();
+        result.success(null);
+        return result;
     }
 }

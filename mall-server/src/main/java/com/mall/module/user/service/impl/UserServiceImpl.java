@@ -22,13 +22,13 @@ import org.springframework.stereotype.Component;
 public class UserServiceImpl implements UserService {
 
     @Autowired
-    UserMapper userMapper;
+    private UserMapper userMapper;
 
     @Autowired
     private PasswordEncoder passwordEncoder;
 
     @Autowired
-    RedisService redisService;
+    private RedisService redisService;
 
     @Override
     public LoginVO register(RegisterDTO dto) {
