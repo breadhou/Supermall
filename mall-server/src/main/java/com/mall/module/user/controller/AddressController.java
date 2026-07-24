@@ -11,13 +11,13 @@ import org.springframework.web.bind.annotation.*;
 import java.util.List;
 
 @RestController
-@RequestMapping("/api/user")
+@RequestMapping("/api/user/address")
 public class AddressController {
 
     @Autowired
     private AddressService addressService;
 
-    @GetMapping("/address")
+    @GetMapping
     public Result<List<AddressVO>> listAddresses() {
         List<AddressVO> list = addressService.listAddresses();
         Result<List<AddressVO>> result = Result.build();
@@ -25,7 +25,7 @@ public class AddressController {
         return result;
     }
 
-    @PostMapping("/address")
+    @PostMapping
     public Result<AddressVO> addAddress(@Valid @RequestBody AddressDTO dto) {
         AddressVO vo = addressService.addAddress(dto);
         Result<AddressVO> result = Result.build();
@@ -33,7 +33,7 @@ public class AddressController {
         return result;
     }
 
-    @PutMapping("/address/{id}")
+    @PutMapping("/{id}")
     public Result<AddressVO> updateAddress(@PathVariable Long id, @Valid @RequestBody AddressDTO dto) {
         AddressVO vo = addressService.updateAddress(id, dto);
         Result<AddressVO> result = Result.build();
@@ -41,7 +41,7 @@ public class AddressController {
         return result;
     }
 
-    @DeleteMapping("/address/{id}")
+    @DeleteMapping("/{id}")
     public Result<Void> deleteAddress(@PathVariable Long id) {
         addressService.deleteAddress(id);
         Result<Void> result = Result.build();

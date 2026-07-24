@@ -4,7 +4,7 @@ import com.mall.common.result.Result;
 import com.mall.module.user.entity.dto.LoginDTO;
 import com.mall.module.user.entity.vo.LoginVO;
 import com.mall.module.user.entity.dto.RegisterDTO;
-import com.mall.module.user.service.impl.UserServiceImpl;
+import com.mall.module.user.service.UserService;
 import jakarta.validation.Valid;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.web.bind.annotation.*;
@@ -14,7 +14,7 @@ import org.springframework.web.bind.annotation.*;
 public class AuthController {
 
     @Autowired
-    UserServiceImpl userService;
+    private UserService userService;
 
     @PostMapping("/register")
     public Result<LoginVO> register(@Valid @RequestBody RegisterDTO dto) {

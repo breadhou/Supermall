@@ -6,10 +6,10 @@ import com.mall.module.user.entity.dto.RegisterDTO;
 
 public interface UserService {
 
-    public abstract LoginVO register(RegisterDTO dto);
+    LoginVO register(RegisterDTO dto);
 
-    public abstract LoginVO login(LoginDTO dto);
+    LoginVO login(LoginDTO dto);
 
-    public abstract LoginVO refresh();
+    LoginVO refresh();
 
 }
