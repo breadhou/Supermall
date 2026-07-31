@@ -88,20 +88,25 @@ supermall/
 
 ### Redis Key 命名规范
 
-使用 `KeyPrefix` 接口体系，前缀格式为 `mall:<domain>:<purpose>:`。例如：
+使用 `KeyPrefix` 接口体系，前缀格式为 `mall:<domain>:<purpose>:`。秒杀热路径的 key 必须让同一 `itemId` 落在同一个 Redis Cluster hash slot：
 
-- `mall:seckill:stock:{itemId}`：秒杀库存预热。
-- `mall:seckill:result:{itemId}:{userId}`：秒杀结果（`0`=排队，`1`=成功，`-1`=失败）。
-- `mall:seckill:limit:{itemId}:{userId}`：已购数量。
+- `mall:seckill:{itemId}:stock`：预热库存。
+- `mall:seckill:{itemId}:snapshot`：预热写入的 SKU、秒杀价和限购快照。
+- `mall:seckill:{itemId}:path:{userId}`：用户动态 path。
+- `mall:seckill:{itemId}:request:{userId}`：path 阶段写入的请求快照（包含默认地址）。
+- `mall:seckill:{itemId}:result:{userId}`：秒杀结果（`0`=排队，`1`=成功，`-1`=失败）。
+- `mall:seckill:{itemId}:limit:{userId}`：本用户已预占数量。
+- `mall:seckill:{itemId}:pending:{messageId}` 与 `pending:index`：消息待确认/处理中状态及索引。
 
-已有 KeyPrefix 实现：`Userkey`、`GoodsKey`、`MiaoshaKey`、`MiaoShaUserKey`、`OrderKey`，位于 `mall-infra/redis/`。
+已有 KeyPrefix 实现：`Userkey`、`GoodsKey`、`MiaoshaKey`、`MiaoShaUserKey`、`OrderKey`，位于 `mall-infra/redis/`；秒杀完整 key 由 `SeckillKey` 生成，旧前缀仅为源码兼容保留。
 
 ### RabbitMQ 秒杀消息流
 
 - 交换机：`mall.seckill.direct`（Direct 类型）。
 - 主队列：`mall.seckill.order`，routing key 为 `order.create`。
 - 死信队列：`mall.seckill.order.dlq`，routing key 为 `order.create.dlx`。
-- 消费端需手动确认：`acknowledge-mode: manual`，`prefetch=1`。
+- 生产者启用 correlated publisher confirm 和 mandatory returns；只有 broker confirm 成功才向客户端返回 `WAITING`。
+- 消费端需手动确认：`acknowledge-mode: manual`，默认 `concurrency=8`、`prefetch=100`；失败消息进入死信队列并由补偿逻辑回滚预占。
 
 ### 统一响应格式
 
@@ -122,7 +127,7 @@ supermall/
 | 阶段三 | 商品模块 | category、product、product_sku、review | 已完成 |
 | 阶段四 | 购物车 | cart_item | 已完成 |
 | 阶段五 | 订单模块 | order、order_item、refund | 已完成 |
-| 阶段六 | 秒杀模块 | seckill_activity、seckill_item、seckill_order | 进行中（核心接口、服务层和 MQ 已接入） |
+| 阶段六 | 秒杀模块 | seckill_activity、seckill_item、seckill_order | 核心实现已完成，集成测试和持续压测待测试环境恢复 |
 | 阶段七 | 优惠券 | coupon、user_coupon | 待实现 |
 | 阶段八 | 支付物流 | payment_record、logistics | 待实现 |
 | 阶段九 | 商家后台 | merchant、admin_user | 待实现 |
@@ -168,7 +173,7 @@ supermall/
 - Controller 路径：`POST/GET/PUT /api/orders`；DTO 使用 `@Valid` 校验。
 - 18 个单元测试（`OrderServiceImplTest`），全部通过。
 
-### 阶段六：秒杀模块（进行中）
+### 阶段六：秒杀模块（核心实现已完成，验证待环境恢复）
 
 当前工作区已完成或开始实现以下基础部分：
 
@@ -180,7 +185,7 @@ supermall/
 - `SeckillConsumer` 已实现主队列事务落库、手动 ACK、失败转死信和死信库存回滚。
 - 秒杀消息使用 JSON 转换器，消费者包含数据库乐观锁扣库存和重复消息幂等处理。
 - `SeckillController` 已提供预热、路径、倒计时、执行秒杀和结果轮询 5 个接口。
-- 已补充 `SeckillServiceImplTest` 14 个服务层单元测试和 `SeckillControllerTest` 5 个 Controller 单元测试，均通过。
+- 已补充 `SeckillServiceImplTest` 12 个服务层单元测试、`SeckillControllerTest` 5 个 Controller 单元测试和 `SeckillMessagePublisherTest` 2 个 publisher confirm 单元测试，均通过。
 - 已修复 `mall-common/pom.xml` 中重复且版本不一致的 `mybatis-plus-annotation` 依赖，统一到 `${mybatis-plus.version}`（3.5.10），解决 `FieldStrategy.IGNORED` 启动异常。
 - `MallApplication` 已在本地成功启动，HTTP 服务监听 8080 端口；临时凭据不写入项目文档。
 - 已修复 `RedisService.get()` 对 Redis 字符串、数字等标量值的反序列化问题，并保留 JSON 对象反序列化；新增 `RedisServiceTest` 覆盖字符串、整数和对象读取。
@@ -190,9 +195,10 @@ supermall/
 
 尚待补齐或验证：
 
+- 订单落库成功但 Redis 结果更新失败的故障注入验证；对应的定时补偿任务已实现。
 - 持续流量压测（瞬时突发压测已完成，仍需单独验证稳定到达率）。
-- 订单落库成功但 Redis 结果更新失败时的补偿任务。
-- 当前秒杀 Controller、服务和 MQ 消费端已通过 IDEA 项目构建验证。
+- 多 API 实例、Redis/RabbitMQ 集群和独立订单消费者的生产式压测。
+- 本轮测试环境已关闭，未重新执行真实集成测试和 JMeter 压测。
 
 ## 数据库
 
@@ -221,4 +227,6 @@ MyBatis-Plus 配置了逻辑删除字段 `deleted`（`0`=未删除，`1`=已删�
 - RabbitMQ 使用异步 publisher confirm；NACK、异常和超时通过 Lua 回滚库存/限购并标记失败，定时任务扫描长时间 pending 状态并修复订单结果或回滚。
 - 消费者保持手动 ACK，默认并发 8、prefetch 100；消息携带 SKU、秒杀价格和地址快照，数据库连接池初始上限调整为 32。
 - 新增 `/actuator/metrics` 指标、Lua/confirm/消费者耗时和补偿计数；本地 `loadtest` profile 将 path 有效期设为 15 分钟，生产默认 60 秒。
-- `mvn test` 当前全量通过（76 个测试）；万级持续到达率和多实例压测仍需在 Redis/RabbitMQ/MySQL 实例环境中执行。
+- 提交 `ba495db` 已落地本阶段代码和测试；MCP IntelliJ JUnit 已运行全部 14 个测试类，均以 `exitCode=0` 通过。
+- 本轮 IDE 终端没有可用的 `mvn` 命令，因此没有重复执行 Maven 全量命令；未启动 MySQL、Redis 或 RabbitMQ。
+- 万级持续到达率、多实例压测及故障注入验证仍需在 Redis/RabbitMQ/MySQL 实例环境恢复后执行。

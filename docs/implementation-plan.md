@@ -6,6 +6,8 @@
 - **先普通后特殊**：先普通下单，再秒杀（秒杀是普通下单的变体）
 - **每个阶段可独立验证**：完成一个阶段就能跑起来看效果
 
+> **进度更新（2026-07-31）**：实际阶段顺序以 `AGENTS.md` 为准，阶段六秒杀核心实现已完成并提交为 `ba495db`。当前已通过 MCP IntelliJ JUnit 运行全部 14 个测试类；测试环境已关闭，真实集成、故障注入和持续/多实例压测待 MySQL、Redis、RabbitMQ 恢复后执行。
+
 ---
 
 ## 第一阶段：基础设施（没有业务也可启动）
@@ -230,9 +232,9 @@ mall-server/src/main/java/com/mall/module/order/
 
 ---
 
-## 第六阶段：优惠券模块
+## 第七阶段：优惠券模块
 
-### 6.1 功能
+### 7.1 功能
 
 | 接口 | 说明 |
 |------|------|
@@ -241,7 +243,7 @@ mall-server/src/main/java/com/mall/module/order/
 | `GET /api/coupons/my` | 我的优惠券（UNUSED/USED/EXPIRED） |
 | `POST /api/coupons/my/{id}/use` | 使用优惠券（下单时调用，内部接口） |
 
-### 6.2 类清单
+### 7.2 类清单
 
 ```
 mall-server/src/main/java/com/mall/module/promotion/
@@ -258,7 +260,7 @@ mall-server/src/main/java/com/mall/module/promotion/
 │   └── ClaimCouponDTO.java
 ```
 
-### 6.3 关键逻辑
+### 7.3 关键逻辑
 
 - **领券**：校验总量 > 0 → `UPDATE coupon SET total = total - 1 WHERE id = ? AND total > 0` → 生成 user_coupon
 - **下单用券**：在第五阶段下单流程第④步，校验 user_coupon 属于该用户、状态 UNUSED、满足 min_amount → 标记 USED
@@ -268,101 +270,106 @@ mall-server/src/main/java/com/mall/module/promotion/
 
 ---
 
-## 第七阶段：秒杀模块（核心亮点）
+## 第六阶段：秒杀模块（核心实现已完成，验证待环境恢复）
 
-### 7.1 功能
+### 6.1 功能
 
 | 接口 | 说明 |
 |------|------|
-| `GET /api/seckill/activities` | 秒杀活动列表 |
-| `GET /api/seckill/items/{activityId}` | 某活动的秒杀商品列表 |
-| `GET /api/seckill/{itemId}/countdown` | 获取秒杀商品状态（未开始/进行中/已结束 + 剩余库存） |
-| `POST /api/seckill/{itemId}/order` | **秒杀下单**（核心接口） |
+| `POST /api/seckill/{itemId}/preheat` | 预热库存、SKU、价格和限购快照 |
+| `POST /api/seckill/{itemId}/path` | 获取用户动态 path，并缓存默认地址快照 |
+| `GET /api/seckill/{itemId}/countdown` | 获取活动状态、价格和 Redis 剩余库存 |
+| `POST /api/seckill/{itemId}/{path}` | **秒杀入口**（无 request body，JWT 解析用户） |
 | `GET /api/seckill/result/{itemId}` | 轮询秒杀结果（排队中/成功/失败） |
 
-### 7.2 类清单
+### 6.2 类清单
 
 ```
-mall-server/src/main/java/com/mall/module/promotion/
+mall-server/src/main/java/com/mall/module/seckill/
 ├── controller/SeckillController.java
-├── service/
-│   ├── SeckillService.java
-│   ├── impl/SeckillServiceImpl.java   # 活动管理 + 下单
-│   └── impl/SeckillOrderConsumer.java # MQ 消费者
-├── mapper/
-│   ├── SeckillActivityMapper.java
-│   ├── SeckillItemMapper.java
-│   └── SeckillOrderMapper.java
 ├── entity/
-│   ├── SeckillActivity.java
-│   ├── SeckillItem.java
-│   ├── SeckillOrder.java
-│   ├── SeckillActivityVO.java
-│   ├── SeckillItemVO.java
-│   └── SeckillResultVO.java           # 秒杀结果
+│   ├── po/SeckillActivity.java / SeckillItem.java / SeckillOrder.java
+│   └── vo/SeckillCountdownVO.java / SeckillResultVO.java
+│              SeckillItemSnapshot.java / SeckillRequestSnapshot.java
+├── mapper/SeckillActivityMapper.java / SeckillItemMapper.java / SeckillOrderMapper.java
+├── service/SeckillService.java
+│   └── impl/SeckillServiceImpl.java
+├── redis/SeckillRedisStateService.java
+├── mq/SeckillMessage.java / SeckillMessagePublisher.java
+│      SeckillConsumer.java / SeckillCompensationTask.java
+└── monitor/SeckillMetrics.java
 ```
 
-### 7.3 Redis Key 设计
+### 6.3 Redis Key 设计
+
+同一商品的 key 使用 `{itemId}` hash tag，保证 reserve/claim/finalize/rollback Lua 脚本在 Redis Cluster 中位于同一 slot。
 
 | Key | 类型 | 说明 |
 |-----|------|------|
-| `mall:seckill:stock:{itemId}` | String(number) | 秒杀商品预热库存 |
-| `mall:seckill:result:{itemId}:{userId}` | String | 秒杀结果 0=排队 1=成功 -1=失败 |
-| `mall:seckill:limit:{itemId}:{userId}` | String(number) | 已购数量（防超限购） |
-| `mall:seckill:lock:{itemId}:{userId}` | String | 分布式锁（防重复提交） |
+| `mall:seckill:{itemId}:stock` | String(number) | 秒杀商品预热库存 |
+| `mall:seckill:{itemId}:snapshot` | JSON | SKU、秒杀价、限购数量 |
+| `mall:seckill:{itemId}:path:{userId}` | String | 用户动态 path |
+| `mall:seckill:{itemId}:request:{userId}` | JSON | path、价格、SKU、默认地址快照 |
+| `mall:seckill:{itemId}:result:{userId}` | String | `0` 排队、`1` 成功、`-1` 失败 |
+| `mall:seckill:{itemId}:limit:{userId}` | String(number) | 本用户已预占数量 |
+| `mall:seckill:{itemId}:pending:{messageId}` | String | `PENDING/PROCESSING` 待确认状态 |
+| `mall:seckill:{itemId}:pending:index` | ZSET | pending 消息超时扫描索引 |
 
-### 7.4 MQ 设计
+### 6.4 MQ 设计
 
 | 组件 | 名称 |
 |------|------|
-| 交换机 | `mall.seckill.exchange`（direct） |
-| 队列 | `mall.seckill.order.queue` |
-| 死信队列 | `mall.seckill.order.dlx.queue` |
-| 绑定 key | `mall.seckill.order` |
+| 交换机 | `mall.seckill.direct`（direct） |
+| 主队列 | `mall.seckill.order` |
+| 死信队列 | `mall.seckill.order.dlq` |
+| routing key | `order.create` / `order.create.dlx` |
 
-消息体：`{ userId, seckillItemId, messageId }` — messageId 用于消费端幂等。
+消息体除 `userId`、`seckillItemId`、`quantity`、`messageId` 外，还携带 `skuId`、`seckillPrice` 和 `addressId` 快照。生产者使用 correlated publisher confirm；消费者手动 ACK，默认 `concurrency=8`、`prefetch=100`。
 
-### 7.5 关键逻辑
+### 6.5 关键逻辑
 
 **活动开始前（预热）：**
-管理员创建秒杀活动 → 将 `seckill_item.stock` 写入 Redis `mall:seckill:stock:{itemId}`。
+
+`preheat` 低频读取 `seckill_item`，把库存和商品快照写入 Redis，并登记 item 供补偿扫描器发现。
+
+**获取 path：**
+
+校验活动时间窗口，读取用户默认地址，生成随机 path，并以生产默认 60 秒 TTL 同时写入 path 和 request snapshot；本地 `loadtest` profile 将 TTL 调整为 15 分钟。
 
 **秒杀下单（核心流程）：**
 
 ```
-① 校验活动状态（NOT_STARTED → 拒绝，ENDED → 拒绝）
-② Redis 判断用户是否已购买（limit bitmap / incr）
-③ Redis Lua 脚本原子执行：
-     stock = GET mall:seckill:stock:{itemId}
-     if stock <= 0 → 返回库存不足
-     DECR stock
-     SET mall:seckill:result:{itemId}:{userId} = 0（排队中）
-④ Lua 返回库存充足 → 发送 MQ 消息
-⑤ 立即返回 "排队中" 给前端
+① 执行接口只读取 Redis request snapshot，不查询 MySQL 商品数据
+② reserve Lua 一次校验 path、重复请求、限购和库存
+③ 预占成功：DECR stock、INCR limit、写 result=0、写 PENDING pending 状态
+④ 异步发布 RabbitMQ，等待 publisher confirm
+⑤ confirm 成功才返回 WAITING；NACK、异常或超时用 rollback Lua 回滚库存/限购并标记 -1
 ```
 
 **MQ 消费者（异步下单）：**
 
 ```
-① 幂等检查：messageId 是否已消费（Redis SET NX）
-② 校验 MySQL seckill_item.stock > 0
-③ UPDATE seckill_item SET stock = stock - 1 WHERE stock > 0（乐观锁）
-④ 扣减 product_sku.stock（回写日常库存）
-⑤ 生成 order + order_item + seckill_order（一人一单唯一约束）
-⑥ 更新 Redis mall:seckill:result:{itemId}:{userId} = 1（成功）
-⑦ 异常 → 死信队列 → 补偿回滚 Redis 库存 + 标记结果为 -1
+① claim Lua 将 PENDING 转为 PROCESSING，重复投递安全退出
+② MySQL 事务用乐观锁扣减 seckill_item.stock
+③ 创建 order + order_item + seckill_order（一人一单唯一约束）
+④ 事务提交后 finalize Lua 写 result=1 并删除 pending
+⑤ 事务异常 → 手动 nack → 死信消费者 rollback Lua 回滚预占
+⑥ 落库成功但 Redis 暂时不可用 → 保留 ACK，由 pending 补偿任务根据 seckill_order 修复结果
 ```
 
 **轮询结果：**
-`GET /api/seckill/result/{itemId}` → 查 Redis `mall:seckill:result:{itemId}:{userId}` → 0=排队 / 1=成功 / -1=失败。如果 Redis 没查到，回源查 seckill_order 表。
 
-**验证：** 管理后台创建秒杀 → 预热库存 → 多个用户同时抢 → 不超卖 → 分布式锁防重 → MQ 消息可靠消费。
+`GET /api/seckill/result/{itemId}` 读取 `result:{userId}`；成功时回查 `seckill_order` 返回 orderId，未参与返回 `NOT_FOUND`。
+
+**验证状态：**
+
+基础本地集成验证和历史 JMeter 突发压测已完成；优化提交为 `ba495db`，MCP IntelliJ JUnit 全部 14 个测试类通过。持续 5,000/10,000 req/s、多实例、故障注入和真实中间件验证待环境恢复。
 
 ---
 
-## 第八阶段：商家后台 + 管理后台
+## 第九阶段：商家后台 + 管理后台
 
-### 8.1 商家后台
+### 9.1 商家后台
 
 | 接口 | 说明 |
 |------|------|
@@ -373,7 +380,7 @@ mall-server/src/main/java/com/mall/module/promotion/
 | `GET /api/merchant/orders` | 本店订单列表 |
 | `POST /api/merchant/orders/{orderNo}/ship` | 发货（写 logistics 表） |
 
-### 8.2 管理后台
+### 9.2 管理后台
 
 | 接口 | 说明 |
 |------|------|
@@ -384,7 +391,7 @@ mall-server/src/main/java/com/mall/module/promotion/
 | `POST /api/admin/coupons` | 创建优惠券模板 |
 | `GET /api/admin/statistics` | 简单统计（用户数、订单数、GMV） |
 
-### 8.3 关键点
+### 9.3 关键点
 
 - 商家和管理员用独立的安全过滤器链（不同于 C 端用户，可以不用 JWT，或者用不同 role 的 JWT）
 - 商家后台只看自己店铺的订单和商品
@@ -394,9 +401,9 @@ mall-server/src/main/java/com/mall/module/promotion/
 
 ---
 
-## 第九阶段：退款 + 评价 + 物流
+## 第八阶段：支付物流与售后
 
-### 9.1 功能
+### 8.1 功能
 
 | 接口 | 说明 |
 |------|------|
@@ -423,13 +430,13 @@ mall-server/src/main/java/com/mall/module/promotion/
     ↓
 阶段五 (普通下单)    ← 依赖购物车 + 用户 (核心业务流程)
     ↓
-    ├── 阶段六 (优惠券) ← 下单时可叠加
+    ├── 阶段七 (优惠券) ← 下单时可叠加
     │
-    └── 阶段七 (秒杀)   ← 基于下单改造 (简历最大亮点)
+    └── 阶段六 (秒杀)   ← 基于下单改造 (简历最大亮点)
            ↓
-阶段八 (商家/管理后台) ← 管理前面所有数据
+阶段八 (支付物流/售后) ← 订单完成后的履约和售后
     ↓
-阶段九 (退款/评价/物流) ← 收尾
+阶段九 (商家/管理后台) ← 管理前面所有数据
 ```
 
 每个阶段完成后 commit 一次，方便回退和查看进度。
