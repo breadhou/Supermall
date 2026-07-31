@@ -48,6 +48,25 @@ public class RedisService {
         return stringRedisTemplate.opsForValue().get(key);
     }
 
+    /**
+     * Read a value when the caller already owns the complete Redis key.
+     *
+     * <p>This is used by key families that need a Redis Cluster hash tag.  A
+     * normal {@link KeyPrefix} is still preferred for ordinary business keys;
+     * seckill keys are built by {@link SeckillKey} so that every key involved
+     * in one Lua invocation is placed in the same slot.</p>
+     */
+    public <T> T getValue(String key, Class<T> clazz) {
+        String value = stringRedisTemplate.opsForValue().get(key);
+        if (value == null) {
+            return null;
+        }
+        if (isScalarType(clazz)) {
+            return Convert.convert(clazz, value);
+        }
+        return JSONUtil.toBean(value, clazz);
+    }
+
     // ---- set ----
 
     public <T> void set(KeyPrefix prefix, String key, T value) {
@@ -67,6 +86,16 @@ public class RedisService {
 
     public void set(String key, String value, long timeout, TimeUnit unit) {
         stringRedisTemplate.opsForValue().set(key, value, timeout, unit);
+    }
+
+    /** Write a JSON/scalar value using a complete Redis key. */
+    public <T> void setValue(String key, T value) {
+        stringRedisTemplate.opsForValue().set(key, JSONUtil.toJsonStr(value));
+    }
+
+    /** Write a JSON/scalar value using a complete Redis key and TTL. */
+    public <T> void setValue(String key, T value, long timeout, TimeUnit unit) {
+        stringRedisTemplate.opsForValue().set(key, JSONUtil.toJsonStr(value), timeout, unit);
     }
 
     // ---- exists ----

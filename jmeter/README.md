@@ -77,6 +77,14 @@ $users = (Resolve-Path '.\jmeter\users.csv').Path
 
 ## 执行接口 QPS 阶梯测试
 
+本地持续压测可使用 `loadtest` profile 将动态 path 有效期放宽到 15 分钟：
+
+```text
+java -jar mall-server.jar --spring.profiles.active=loadtest
+```
+
+生产环境不启用该 profile，默认 path 有效期保持 60 秒。
+
 若要排除登录和动态路径生成对结果的影响，可先为某个活动准备 JWT 和动态路径：
 
 ```powershell

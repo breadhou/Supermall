@@ -9,6 +9,7 @@ import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.core.ValueOperations;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
@@ -24,7 +25,7 @@ class RedisServiceTest {
 
     @BeforeEach
     void setUp() {
-        when(stringRedisTemplate.opsForValue()).thenReturn(valueOperations);
+        lenient().when(stringRedisTemplate.opsForValue()).thenReturn(valueOperations);
         redisService = new RedisService(stringRedisTemplate);
     }
 
@@ -39,11 +40,19 @@ class RedisServiceTest {
 
     @Test
     void getShouldReadIntegerScalar() {
-        when(valueOperations.get("mall:seckill:stock:1")).thenReturn("2");
+        when(valueOperations.get(SeckillKey.stockKey(1L))).thenReturn("2");
 
-        Integer value = redisService.get(SeckillKey.stock, "1", Integer.class);
+        Integer value = redisService.getValue(SeckillKey.stockKey(1L), Integer.class);
 
         assertEquals(2, value);
+    }
+
+    @Test
+    void seckillKeysKeepTheItemHashTagForClusterScripts() {
+        assertEquals("mall:seckill:{1}:stock", SeckillKey.stockKey(1L));
+        assertEquals("mall:seckill:{1}:path:2", SeckillKey.pathKey(1L, 2L));
+        assertEquals("mall:seckill:{1}:result:2", SeckillKey.resultKey(1L, 2L));
+        assertEquals("mall:seckill:{1}:pending:message-1", SeckillKey.pendingKey(1L, "message-1"));
     }
 
     @Test

@@ -1,0 +1,4 @@
+# Local load-test profile only.  Keep production path validity at 60 seconds.
+mall:
+  seckill:
+    path-ttl-seconds: 900

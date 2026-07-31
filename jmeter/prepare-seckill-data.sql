@@ -16,7 +16,7 @@ VALUES (@product_id, 'JMeter 秒杀压测商品', '仅用于本地压测', @cate
 ON DUPLICATE KEY UPDATE name = VALUES(name), description = VALUES(description), category_id = VALUES(category_id), status = VALUES(status);
 
 INSERT INTO product_sku (id, product_id, specs, price, stock, image)
-VALUES (@sku_id, @product_id, '{"压测":"专用"}', 19.90, 100000, NULL)
+VALUES (@sku_id, @product_id, '{"压测":"专用"}', 19.90, 1000000, NULL)
 ON DUPLICATE KEY UPDATE product_id = VALUES(product_id), specs = VALUES(specs), price = VALUES(price), stock = VALUES(stock), image = VALUES(image);
 
 INSERT INTO seckill_activity (id, name, start_time, end_time, status)
@@ -24,7 +24,7 @@ VALUES (@activity_id, 'JMeter 本地压测活动', NOW() - INTERVAL 1 MINUTE, NO
 ON DUPLICATE KEY UPDATE name = VALUES(name), start_time = VALUES(start_time), end_time = VALUES(end_time), status = VALUES(status);
 
 INSERT INTO seckill_item (id, activity_id, sku_id, seckill_price, stock, limit_per_user)
-VALUES (@item_id, @activity_id, @sku_id, 9.90, 1000, 1)
+VALUES (@item_id, @activity_id, @sku_id, 9.90, 1000000, 1)
 ON DUPLICATE KEY UPDATE activity_id = VALUES(activity_id), sku_id = VALUES(sku_id), seckill_price = VALUES(seckill_price), stock = VALUES(stock), limit_per_user = VALUES(limit_per_user);
 
 SELECT @item_id AS item_id, stock, limit_per_user

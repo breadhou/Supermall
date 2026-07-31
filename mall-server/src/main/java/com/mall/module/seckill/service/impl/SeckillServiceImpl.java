@@ -3,83 +3,105 @@ package com.mall.module.seckill.service.impl;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.mall.common.enums.ResultStatus;
 import com.mall.common.exception.BusinessException;
-import com.mall.infra.rabbitmq.MQConfig;
-import com.mall.infra.redis.RedisLock;
 import com.mall.infra.redis.RedisService;
 import com.mall.infra.redis.SeckillKey;
 import com.mall.module.seckill.entity.po.SeckillActivity;
 import com.mall.module.seckill.entity.po.SeckillItem;
 import com.mall.module.seckill.entity.po.SeckillOrder;
 import com.mall.module.seckill.entity.vo.SeckillCountdownVO;
+import com.mall.module.seckill.entity.vo.SeckillItemSnapshot;
+import com.mall.module.seckill.entity.vo.SeckillRequestSnapshot;
 import com.mall.module.seckill.entity.vo.SeckillResultVO;
 import com.mall.module.seckill.mapper.SeckillActivityMapper;
 import com.mall.module.seckill.mapper.SeckillItemMapper;
 import com.mall.module.seckill.mapper.SeckillOrderMapper;
+import com.mall.module.seckill.monitor.SeckillMetrics;
 import com.mall.module.seckill.mq.SeckillMessage;
+import com.mall.module.seckill.mq.SeckillMessagePublisher;
+import com.mall.module.seckill.redis.SeckillRedisStateService;
 import com.mall.module.seckill.service.SeckillService;
+import com.mall.module.user.entity.po.Address;
+import com.mall.module.user.mapper.AddressMapper;
 import com.mall.security.utils.UserContext;
-import org.springframework.amqp.rabbit.core.RabbitTemplate;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.core.io.ClassPathResource;
-import org.springframework.data.redis.core.StringRedisTemplate;
-import org.springframework.data.redis.core.script.DefaultRedisScript;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
 import java.time.LocalDateTime;
-import java.util.Collections;
-import java.util.UUID;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
+import java.util.UUID;
 
 @Service
 public class SeckillServiceImpl implements SeckillService {
 
     @Autowired
-    SeckillActivityMapper activityMapper;
+    private SeckillActivityMapper activityMapper;
 
     @Autowired
-    SeckillItemMapper itemMapper;
+    private SeckillItemMapper itemMapper;
 
     @Autowired
-    SeckillOrderMapper orderMapper;
+    private SeckillOrderMapper orderMapper;
 
     @Autowired
-    RedisService redisService;
+    private AddressMapper addressMapper;
 
     @Autowired
-    private RedisLock redisLock;
+    private RedisService redisService;
 
     @Autowired
-    private StringRedisTemplate redisTemplate;
+    private SeckillRedisStateService redisStateService;
 
     @Autowired
-    private RabbitTemplate rabbitTemplate;
+    private SeckillMessagePublisher messagePublisher;
 
-    private final DefaultRedisScript<Long> redisScript = createRedisScript();
+    @Autowired(required = false)
+    private SeckillMetrics metrics;
 
-    private static DefaultRedisScript<Long> createRedisScript() {
-        DefaultRedisScript<Long> script = new DefaultRedisScript<>();
-        script.setLocation(new ClassPathResource("Lua/seckill_stock.lua"));
-        script.setResultType(Long.class);
-        return script;
-    }
+    @Value("${mall.seckill.path-ttl-seconds:60}")
+    private long pathTtlSeconds = 60;
+
+    @Value("${mall.seckill.result-ttl-seconds:3600}")
+    private long resultTtlSeconds = 3600;
+
+    @Value("${mall.seckill.publisher-confirm-timeout-ms:1000}")
+    private long publisherConfirmTimeoutMs = 1000;
 
     @Override
     public void preheatStock(Long itemId) {
+        if (itemId == null) {
+            throw new BusinessException(ResultStatus.PARAM_ERROR);
+        }
 
         SeckillItem item = itemMapper.selectById(itemId);
         if (item == null) {
             throw new BusinessException(ResultStatus.DATA_NOT_FOUND);
         }
-        redisService.set(
-                SeckillKey.stock,
-                itemId.toString(),
-                item.getStock()
-        );
+        if (item.getStock() == null || item.getStock() < 0
+                || item.getSkuId() == null || item.getSeckillPrice() == null
+                || item.getLimitPerUser() == null || item.getLimitPerUser() <= 0) {
+            throw new BusinessException(ResultStatus.SECKILL_FAIL);
+        }
 
+        SeckillItemSnapshot snapshot = new SeckillItemSnapshot()
+                .setItemId(itemId)
+                .setSkuId(item.getSkuId())
+                .setSeckillPrice(item.getSeckillPrice())
+                .setLimitPerUser(item.getLimitPerUser());
+        redisService.setValue(SeckillKey.stockKey(itemId), item.getStock());
+        redisService.setValue(SeckillKey.itemSnapshotKey(itemId), snapshot);
+        redisStateService.registerItem(itemId);
     }
 
     @Override
     public String getPath(Long itemId) {
+        Long userId = UserContext.getUserId();
+        if (itemId == null || userId == null) {
+            throw new BusinessException(ResultStatus.PARAM_ERROR);
+        }
 
         SeckillItem item = itemMapper.selectById(itemId);
         if (item == null) {
@@ -95,19 +117,45 @@ public class SeckillServiceImpl implements SeckillService {
             throw new BusinessException(ResultStatus.SECKILL_END);
         }
 
-        String path = UUID.randomUUID().toString();
-        redisService.set(
-                SeckillKey.path,
-                itemId + ":" + UserContext.getUserId(),
-                path
+        Address address = addressMapper.selectOne(
+                new LambdaQueryWrapper<Address>()
+                        .eq(Address::getUserId, userId)
+                        .orderByDesc(Address::getIsDefault)
+                        .orderByDesc(Address::getId)
+                        .last("LIMIT 1")
         );
+        if (address == null) {
+            throw new BusinessException(ResultStatus.SECKILL_FAIL);
+        }
 
+        String path = UUID.randomUUID().toString();
+        SeckillRequestSnapshot requestSnapshot = new SeckillRequestSnapshot()
+                .setPath(path)
+                .setSkuId(item.getSkuId())
+                .setSeckillPrice(item.getSeckillPrice())
+                .setLimitPerUser(item.getLimitPerUser())
+                .setAddressId(address.getId());
+
+        redisService.set(
+                SeckillKey.pathKey(itemId, userId),
+                path,
+                pathTtlSeconds,
+                TimeUnit.SECONDS
+        );
+        redisService.setValue(
+                SeckillKey.requestSnapshotKey(itemId, userId),
+                requestSnapshot,
+                pathTtlSeconds,
+                TimeUnit.SECONDS
+        );
         return path;
-
     }
 
     @Override
     public SeckillCountdownVO getCountdown(Long itemId) {
+        if (itemId == null) {
+            throw new BusinessException(ResultStatus.PARAM_ERROR);
+        }
 
         SeckillItem item = itemMapper.selectById(itemId);
         if (item == null) {
@@ -124,96 +172,106 @@ public class SeckillServiceImpl implements SeckillService {
         vo.setEndTime(activity.getEndTime());
         vo.setStartTime(activity.getStartTime());
         vo.setLimitPerUser(item.getLimitPerUser());
-        vo.setRemainingStock(redisService.get(
-                SeckillKey.stock,
-                itemId.toString(),
-                Integer.class
-        ));
+        vo.setRemainingStock(redisService.getValue(SeckillKey.stockKey(itemId), Integer.class));
         vo.setSeckillPrice(item.getSeckillPrice());
-
         return vo;
-
     }
 
     @Override
     public SeckillResultVO executeSeckill(Long itemId, String path) {
-
         Long userId = UserContext.getUserId();
-        if (itemId == null || userId == null) {
+        if (itemId == null || userId == null || path == null || path.isBlank()) {
             throw new BusinessException(ResultStatus.PARAM_ERROR);
         }
 
-        SeckillItem item = itemMapper.selectById(itemId);
-        if (item == null) {
-            throw new BusinessException(ResultStatus.DATA_NOT_FOUND);
-        }
-
-        String key = itemId + ":" + userId;
-        String cachedPath = redisService.get(
-                SeckillKey.path,
-                key,
-                String.class
+        // This is the only read before Lua.  It is a Redis snapshot, not a
+        // database query; the execute endpoint deliberately stays DB-free.
+        SeckillRequestSnapshot snapshot = redisService.getValue(
+                SeckillKey.requestSnapshotKey(itemId, userId),
+                SeckillRequestSnapshot.class
         );
-        if (path == null || !path.equals(cachedPath)) {
+        if (snapshot == null || snapshot.getSkuId() == null
+                || snapshot.getSeckillPrice() == null
+                || snapshot.getLimitPerUser() == null || snapshot.getAddressId() == null) {
+            recordEntry("snapshot_missing");
             throw new BusinessException(ResultStatus.SECKILL_FAIL);
         }
 
-        String stockKey = SeckillKey.stock.getPrefix() + itemId;
-        String lockKey = SeckillKey.userLock.getPrefix() + key;
-        String lockValue = redisLock.lock(lockKey, 10, TimeUnit.SECONDS);
-        if (lockValue == null) {
+        SeckillMessage message = new SeckillMessage();
+        message.setUserId(userId);
+        message.setSeckillItemId(itemId);
+        message.setMessageId(UUID.randomUUID().toString());
+        message.setQuantity(1);
+        message.setSkuId(snapshot.getSkuId());
+        message.setSeckillPrice(snapshot.getSeckillPrice());
+        message.setAddressId(snapshot.getAddressId());
+
+        long luaStarted = System.nanoTime();
+        Long reserveResult;
+        try {
+            reserveResult = redisStateService.reserve(
+                    itemId,
+                    userId,
+                    path,
+                    message.getQuantity(),
+                    snapshot.getLimitPerUser(),
+                    message.getMessageId(),
+                    resultTtlSeconds
+            );
+        } catch (RuntimeException exception) {
+            recordLua(luaStarted);
+            recordEntry("lua_error");
+            throw new BusinessException(ResultStatus.SECKILL_FAIL);
+        }
+        recordLua(luaStarted);
+
+        if (reserveResult == null || reserveResult == -1L || reserveResult == -2L || reserveResult == -3L) {
+            recordEntry(reserveResult != null && reserveResult == -3L ? "path_invalid" : "lua_failed");
+            throw new BusinessException(ResultStatus.SECKILL_FAIL);
+        }
+        if (reserveResult == 0L) {
+            recordEntry("stock_empty");
+            throw new BusinessException(ResultStatus.SECKILL_END);
+        }
+        if (reserveResult == -4L) {
+            recordEntry("repeat");
+            throw new BusinessException(ResultStatus.SECKILL_REPEAT);
+        }
+        if (reserveResult != 1L) {
+            recordEntry("lua_failed");
             throw new BusinessException(ResultStatus.SECKILL_FAIL);
         }
 
         try {
-            // 0 表示已有请求排队中，1 表示已经成功，均不能再次下单。
-            Integer resultState = redisService.get(SeckillKey.result, key, Integer.class);
-            if (resultState != null && resultState >= 0) {
-                throw new BusinessException(ResultStatus.SECKILL_REPEAT);
-            }
-
-            Integer bought = redisService.get(SeckillKey.userLimit, key, Integer.class);
-            if (bought != null && bought >= item.getLimitPerUser()) {
-                throw new BusinessException(ResultStatus.SECKILL_REPEAT);
-            }
-
-            // KEYS[1] = mall:seckill:stock:{itemId}，ARGV[1] = 本次扣减数量。
-            Long stockResult = redisTemplate.execute(
-                    redisScript,
-                    Collections.singletonList(stockKey),
-                    "1"
+            CompletableFuture<SeckillMessagePublisher.PublishResult> future =
+                    messagePublisher.publishAsync(message);
+            SeckillMessagePublisher.PublishResult publishResult = future.get(
+                    publisherConfirmTimeoutMs,
+                    TimeUnit.MILLISECONDS
             );
-            if (stockResult == null || stockResult < 0L) {
+            if (publishResult == null || !publishResult.confirmed()) {
+                rollbackAfterPublishFailure(message);
+                recordEntry("publish_failed");
                 throw new BusinessException(ResultStatus.SECKILL_FAIL);
             }
-            if (stockResult == 0L) {
-                throw new BusinessException(ResultStatus.SECKILL_END);
-            }
-
-            SeckillMessage message = new SeckillMessage();
-            message.setUserId(userId);
-            message.setSeckillItemId(itemId);
-            message.setMessageId(UUID.randomUUID().toString());
-            message.setQuantity(1);
-
-            try {
-                // 先标记排队，消费者成功落库后再改为 1。
-                redisService.set(SeckillKey.result, key, 0);
-                rabbitTemplate.convertAndSend(
-                        MQConfig.SECKILL_EXCHANGE,
-                        MQConfig.SECKILL_ROUTING_KEY,
-                        message
-                );
-            } catch (RuntimeException exception) {
-                // 发送消息发生同步异常时回滚 Redis 预扣库存，并标记本次失败。
-                redisTemplate.opsForValue().increment(stockKey);
-                redisService.set(SeckillKey.result, key, -1);
-                throw new BusinessException(ResultStatus.SECKILL_FAIL);
-            }
-        } finally {
-            redisLock.unlock(lockKey, lockValue);
+        } catch (InterruptedException exception) {
+            Thread.currentThread().interrupt();
+            rollbackAfterPublishFailure(message);
+            recordEntry("publish_timeout");
+            throw new BusinessException(ResultStatus.SECKILL_FAIL);
+        } catch (ExecutionException | TimeoutException exception) {
+            rollbackAfterPublishFailure(message);
+            recordEntry(exception instanceof TimeoutException ? "publish_timeout" : "publish_failed");
+            throw new BusinessException(ResultStatus.SECKILL_FAIL);
+        } catch (BusinessException exception) {
+            throw exception;
+        } catch (RuntimeException exception) {
+            rollbackAfterPublishFailure(message);
+            recordEntry("publish_failed");
+            throw new BusinessException(ResultStatus.SECKILL_FAIL);
         }
 
+        recordEntry("waiting");
         SeckillResultVO vo = new SeckillResultVO();
         vo.setStatus("WAITING");
         return vo;
@@ -221,14 +279,15 @@ public class SeckillServiceImpl implements SeckillService {
 
     @Override
     public SeckillResultVO pollResult(Long itemId) {
-
         Long userId = UserContext.getUserId();
         if (itemId == null || userId == null) {
             throw new BusinessException(ResultStatus.PARAM_ERROR);
         }
 
-        String key = itemId + ":" + userId;
-        Integer resultState = redisService.get(SeckillKey.result, key, Integer.class);
+        Integer resultState = redisService.getValue(
+                SeckillKey.resultKey(itemId, userId),
+                Integer.class
+        );
 
         SeckillResultVO vo = new SeckillResultVO();
         if (resultState == null) {
@@ -236,12 +295,10 @@ public class SeckillServiceImpl implements SeckillService {
             vo.setReason("未参与秒杀");
             return vo;
         }
-
         if (resultState == 0) {
             vo.setStatus("WAITING");
             return vo;
         }
-
         if (resultState == 1) {
             vo.setStatus("SUCCESS");
             SeckillOrder seckillOrder = orderMapper.selectOne(
@@ -258,5 +315,29 @@ public class SeckillServiceImpl implements SeckillService {
         vo.setStatus("FAILED");
         vo.setReason("库存不足或订单处理失败");
         return vo;
+    }
+
+    private void rollbackAfterPublishFailure(SeckillMessage message) {
+        try {
+            Long rollbackResult = redisStateService.rollback(message, false);
+            if (rollbackResult != null && rollbackResult == 3L) {
+                // A consumer won the race.  It owns the reservation now; the
+                // consumer or compensation task will finalize it safely.
+            }
+        } catch (RuntimeException exception) {
+            // Leave the pending state for the scheduled compensation task.
+        }
+    }
+
+    private void recordLua(long started) {
+        if (metrics != null) {
+            metrics.recordLua(System.nanoTime() - started);
+        }
+    }
+
+    private void recordEntry(String outcome) {
+        if (metrics != null) {
+            metrics.recordEntry(outcome);
+        }
     }
 }

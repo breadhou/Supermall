@@ -86,12 +86,12 @@ public class CartServiceImpl implements CartService {
 
         // 批量查 SKU 和 Product 信息，避免 N+1
         List<Long> skuIds = items.stream().map(CartItem::getSkuId).toList();
-        List<ProductSku> skus = productSkuMapper.selectByIds(skuIds);
+        List<ProductSku> skus = productSkuMapper.selectBatchIds(skuIds);
         Map<Long, ProductSku> skuMap = skus.stream()
                 .collect(Collectors.toMap(ProductSku::getId, s -> s));
 
         List<Long> productIds = skus.stream().map(ProductSku::getProductId).distinct().toList();
-        List<Product> products = productMapper.selectByIds(productIds);
+        List<Product> products = productMapper.selectBatchIds(productIds);
         Map<Long, Product> productMap = products.stream()
                 .collect(Collectors.toMap(Product::getId, p -> p));
 

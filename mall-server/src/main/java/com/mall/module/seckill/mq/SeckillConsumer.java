@@ -3,8 +3,6 @@ package com.mall.module.seckill.mq;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.mall.common.utils.SnowflakeIdUtil;
 import com.mall.infra.rabbitmq.MQConfig;
-import com.mall.infra.redis.RedisService;
-import com.mall.infra.redis.SeckillKey;
 import com.mall.module.order.entity.po.Order;
 import com.mall.module.order.entity.po.OrderItem;
 import com.mall.module.order.mapper.OrderItemMapper;
@@ -15,6 +13,8 @@ import com.mall.module.seckill.entity.po.SeckillItem;
 import com.mall.module.seckill.entity.po.SeckillOrder;
 import com.mall.module.seckill.mapper.SeckillItemMapper;
 import com.mall.module.seckill.mapper.SeckillOrderMapper;
+import com.mall.module.seckill.monitor.SeckillMetrics;
+import com.mall.module.seckill.redis.SeckillRedisStateService;
 import com.mall.module.user.entity.po.Address;
 import com.mall.module.user.mapper.AddressMapper;
 import com.rabbitmq.client.Channel;
@@ -22,6 +22,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.amqp.rabbit.annotation.RabbitListener;
 import org.springframework.amqp.support.AmqpHeaders;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.messaging.handler.annotation.Header;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.PlatformTransactionManager;
@@ -31,11 +32,10 @@ import java.io.IOException;
 import java.math.BigDecimal;
 
 /**
- * 秒杀订单消息消费者。
- *
- * 主队列负责事务落库，数据库事务提交后才确认消息；处理失败时拒绝消息，
- * 由 MQConfig 配置的死信交换机转入死信队列。死信监听器负责回滚 Redis
- * 预扣库存并将秒杀结果标记为失败。
+ * Asynchronous seckill order consumer.  It claims the Redis reservation before
+ * entering MySQL, uses manual acknowledgements, and never rejects a committed
+ * database transaction merely because the result-cache update is temporarily
+ * unavailable.
  */
 @Slf4j
 @Component
@@ -60,47 +60,77 @@ public class SeckillConsumer {
     private AddressMapper addressMapper;
 
     @Autowired
-    private RedisService redisService;
+    private SeckillRedisStateService redisStateService;
 
     @Autowired
     private PlatformTransactionManager transactionManager;
 
-    /**
-     * 消费秒杀订单消息。
-     */
+    @Autowired(required = false)
+    private SeckillMetrics metrics;
+
+    @Value("${mall.seckill.result-ttl-seconds:3600}")
+    private long resultTtlSeconds = 3600;
+
     @RabbitListener(
             queues = MQConfig.SECKILL_QUEUE,
-            ackMode = "MANUAL"
+            ackMode = "MANUAL",
+            concurrency = "${mall.seckill.consumer.concurrency:8}"
     )
     public void consume(
             SeckillMessage message,
             Channel channel,
             @Header(AmqpHeaders.DELIVERY_TAG) long deliveryTag
     ) {
+        long started = System.nanoTime();
         try {
             validateMessage(message);
+
+            Long claimResult = redisStateService.claim(message);
+            if (claimResult == null) {
+                throw new IllegalStateException("Unable to claim seckill reservation");
+            }
+            if (claimResult != 1L) {
+                // The API timeout/rollback may have won the race, or another
+                // delivery may already be processing this message.
+                channel.basicAck(deliveryTag, false);
+                recordConsumer(true, started);
+                return;
+            }
 
             OrderProcessResult result = new TransactionTemplate(transactionManager)
                     .execute(status -> createOrderInTransaction(message));
             if (result == null) {
-                throw new IllegalStateException("秒杀订单事务未返回结果");
+                throw new IllegalStateException("Seckill order transaction returned no result");
             }
 
-            markSuccess(message, result);
+            // The transaction is committed at this point.  Keep the message
+            // acknowledged if Redis is down; the pending scanner will repair
+            // the result from the durable seckill_order row.
+            try {
+                Long finalizeResult = redisStateService.finalizeSuccess(message, resultTtlSeconds);
+                if (finalizeResult == null || finalizeResult == 0L) {
+                    log.error("Order committed but seckill result was not finalized, messageId={}, orderId={}",
+                            message.getMessageId(), result.orderId());
+                }
+            } catch (RuntimeException exception) {
+                log.error("Order committed but Redis result update failed, messageId={}, orderId={}",
+                        message.getMessageId(), result.orderId(), exception);
+            }
+
             channel.basicAck(deliveryTag, false);
+            recordConsumer(true, started);
         } catch (Exception exception) {
-            log.error("秒杀订单消息消费失败，messageId={}",
+            recordConsumer(false, started);
+            log.error("Seckill order message failed, messageId={}",
                     message == null ? null : message.getMessageId(), exception);
             rejectToDeadLetter(channel, deliveryTag);
         }
     }
 
-    /**
-     * 死信处理：回滚 Redis 预扣库存，并让前端轮询到 FAILED。
-     */
     @RabbitListener(
             queues = MQConfig.SECKILL_DLQ_QUEUE,
-            ackMode = "MANUAL"
+            ackMode = "MANUAL",
+            concurrency = "${mall.seckill.compensation.concurrency:1}"
     )
     public void consumeDeadLetter(
             SeckillMessage message,
@@ -109,20 +139,24 @@ public class SeckillConsumer {
     ) {
         try {
             if (!isValidMessage(message)) {
-                log.error("丢弃格式非法的秒杀死信消息，message={}", message);
+                log.error("Dropping malformed seckill dead-letter message: {}", message);
                 channel.basicAck(deliveryTag, false);
                 return;
             }
 
-            rollbackRedisState(message);
+            Long rollbackResult = redisStateService.rollback(message, true);
+            if (rollbackResult == null || rollbackResult == -1L) {
+                throw new IllegalStateException("Unable to roll back seckill reservation");
+            }
             channel.basicAck(deliveryTag, false);
         } catch (Exception exception) {
-            log.error("秒杀死信处理失败，messageId={}", message.getMessageId(), exception);
+            log.error("Seckill dead-letter compensation failed, messageId={}",
+                    message == null ? null : message.getMessageId(), exception);
             try {
-                // Redis 暂时不可用时重新入队，等待下一次补偿。
                 channel.basicNack(deliveryTag, false, true);
             } catch (IOException nackException) {
-                log.error("秒杀死信重新入队失败，messageId={}", message.getMessageId(), nackException);
+                log.error("Unable to requeue seckill dead-letter message, messageId={}",
+                        message == null ? null : message.getMessageId(), nackException);
             }
         }
     }
@@ -132,7 +166,6 @@ public class SeckillConsumer {
         Long itemId = message.getSeckillItemId();
         Integer quantity = message.getQuantity();
 
-        // 消息重复投递时直接返回已有订单，避免再次扣库存和创建订单。
         SeckillOrder existing = seckillOrderMapper.selectOne(
                 new LambdaQueryWrapper<SeckillOrder>()
                         .eq(SeckillOrder::getUserId, userId)
@@ -142,42 +175,63 @@ public class SeckillConsumer {
             return new OrderProcessResult(existing.getOrderId(), false);
         }
 
-        SeckillItem seckillItem = seckillItemMapper.selectById(itemId);
-        if (seckillItem == null || seckillItem.getSeckillPrice() == null) {
-            throw new IllegalStateException("秒杀商品不存在或价格为空");
+        BigDecimal seckillPrice = message.getSeckillPrice();
+        Long skuId = message.getSkuId();
+        Long addressId = message.getAddressId();
+
+        // Keep a compatibility fallback for messages produced before the
+        // snapshot fields were introduced.  New messages do not execute these
+        // reads on the consumer hot path.
+        if (seckillPrice == null || skuId == null) {
+            SeckillItem seckillItem = seckillItemMapper.selectById(itemId);
+            if (seckillItem == null || seckillItem.getSeckillPrice() == null) {
+                throw new IllegalStateException("Seckill item does not exist or has no price");
+            }
+            if (seckillPrice == null) {
+                seckillPrice = seckillItem.getSeckillPrice();
+            }
+            if (skuId == null) {
+                skuId = seckillItem.getSkuId();
+            }
         }
 
-        ProductSku sku = productSkuMapper.selectById(seckillItem.getSkuId());
-        if (sku == null) {
-            throw new IllegalStateException("关联 SKU 不存在");
+        if (skuId == null) {
+            throw new IllegalStateException("Associated SKU does not exist");
+        }
+        if (message.getSkuId() == null) {
+            ProductSku sku = productSkuMapper.selectById(skuId);
+            if (sku == null) {
+                throw new IllegalStateException("Associated SKU does not exist");
+            }
         }
 
-        // 秒杀订单没有单独携带地址，使用用户当前默认地址；没有默认地址时取最新地址。
-        Address address = addressMapper.selectOne(
-                new LambdaQueryWrapper<Address>()
-                        .eq(Address::getUserId, userId)
-                        .orderByDesc(Address::getIsDefault)
-                        .orderByDesc(Address::getId)
-                        .last("LIMIT 1")
-        );
-        if (address == null) {
-            throw new IllegalStateException("用户没有收货地址");
+        if (addressId == null) {
+            Address address = addressMapper.selectOne(
+                    new LambdaQueryWrapper<Address>()
+                            .eq(Address::getUserId, userId)
+                            .orderByDesc(Address::getIsDefault)
+                            .orderByDesc(Address::getId)
+                            .last("LIMIT 1")
+            );
+            if (address == null) {
+                throw new IllegalStateException("User has no shipping address");
+            }
+            addressId = address.getId();
         }
 
         int updated = seckillItemMapper.decrementStock(itemId, quantity);
         if (updated != 1) {
-            throw new IllegalStateException("数据库库存不足");
+            throw new IllegalStateException("Database seckill stock is insufficient");
         }
 
         Long orderId = SnowflakeIdUtil.nextId();
-        BigDecimal totalAmount = seckillItem.getSeckillPrice()
-                .multiply(BigDecimal.valueOf(quantity));
+        BigDecimal totalAmount = seckillPrice.multiply(BigDecimal.valueOf(quantity));
 
         Order order = new Order()
                 .setId(orderId)
                 .setOrderNo(String.valueOf(orderId))
                 .setUserId(userId)
-                .setAddressId(address.getId())
+                .setAddressId(addressId)
                 .setTotalAmount(totalAmount)
                 .setStatus("PENDING");
         orderMapper.insert(order);
@@ -185,8 +239,8 @@ public class SeckillConsumer {
         OrderItem orderItem = new OrderItem()
                 .setId(SnowflakeIdUtil.nextId())
                 .setOrderId(orderId)
-                .setSkuId(sku.getId())
-                .setPrice(seckillItem.getSeckillPrice())
+                .setSkuId(skuId)
+                .setPrice(seckillPrice)
                 .setQuantity(quantity);
         orderItemMapper.insert(orderItem);
 
@@ -200,30 +254,9 @@ public class SeckillConsumer {
         return new OrderProcessResult(orderId, true);
     }
 
-    private void markSuccess(SeckillMessage message, OrderProcessResult result) {
-        String key = resultKey(message);
-        try {
-            if (result.created()) {
-                redisService.incr(SeckillKey.userLimit, key);
-            }
-            redisService.set(SeckillKey.result, key, 1);
-        } catch (RuntimeException exception) {
-            // 数据库事务已经提交，不能再拒绝消息触发库存回滚；交给后续补偿任务处理。
-            log.error("订单已落库但 Redis 结果更新失败，messageId={}, orderId={}",
-                    message.getMessageId(), result.orderId(), exception);
-        }
-    }
-
-    private void rollbackRedisState(SeckillMessage message) {
-        redisService.incr(SeckillKey.stock,
-                message.getSeckillItemId().toString(),
-                message.getQuantity());
-        redisService.set(SeckillKey.result, resultKey(message), -1);
-    }
-
     private void validateMessage(SeckillMessage message) {
         if (!isValidMessage(message)) {
-            throw new IllegalArgumentException("秒杀消息参数非法");
+            throw new IllegalArgumentException("Invalid seckill message");
         }
     }
 
@@ -231,19 +264,23 @@ public class SeckillConsumer {
         return message != null
                 && message.getUserId() != null
                 && message.getSeckillItemId() != null
+                && message.getMessageId() != null
+                && !message.getMessageId().isBlank()
                 && message.getQuantity() != null
                 && message.getQuantity() > 0;
-    }
-
-    private String resultKey(SeckillMessage message) {
-        return message.getSeckillItemId() + ":" + message.getUserId();
     }
 
     private void rejectToDeadLetter(Channel channel, long deliveryTag) {
         try {
             channel.basicNack(deliveryTag, false, false);
         } catch (IOException nackException) {
-            log.error("秒杀消息拒绝并转入死信队列失败，deliveryTag={}", deliveryTag, nackException);
+            log.error("Unable to dead-letter seckill message, deliveryTag={}", deliveryTag, nackException);
+        }
+    }
+
+    private void recordConsumer(boolean success, long started) {
+        if (metrics != null) {
+            metrics.recordConsumer(success, System.nanoTime() - started);
         }
     }
 

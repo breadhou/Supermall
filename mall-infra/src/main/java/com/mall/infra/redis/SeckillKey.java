@@ -1,73 +1,84 @@
 package com.mall.infra.redis;
 
 /**
- * 秒杀域 Redis Key 定义，对应设计文档 7.3 节。
+ * Redis keys used by the seckill flow.
  *
- * Key 格式：mall:seckill:<purpose>:{业务ID}
- *
- * 使用示例：
- *   // 预热库存
- *   redisService.set(SeckillKey.stock, itemId.toString(), stockCount);
- *   // Lua 脚本原子扣减后检查库存
- *   Long stock = redisService.get(SeckillKey.stock, itemId, Long.class);
- *   // 写秒杀结果
- *   redisService.set(SeckillKey.result, itemId + ":" + userId, "1");
- *   // 查询秒杀结果
- *   String result = redisService.get(SeckillKey.result.getPrefix() + itemId + ":" + userId);
+ * <p>All keys belonging to one item use the same Redis Cluster hash tag:
+ * {@code mall:seckill:{itemId}:...}.  A reserve/rollback Lua script can
+ * therefore touch the path, result, limit, stock and pending keys atomically
+ * both on standalone Redis and on a Redis Cluster.</p>
  */
-public class SeckillKey extends BasePrefix {
+public final class SeckillKey extends BasePrefix {
 
-    // ==================== 设计文档 7.3 节要求的 4 个核心 Key ====================
+    private static final String ROOT = "mall:seckill:";
 
     /**
-     * 秒杀商品预热库存（String number）。
-     * 活动开始前从 seckill_item.stock 加载到 Redis，
-     * 秒杀时通过 Lua 脚本原子 DECR，永不过期。
-     * → Key: mall:seckill:stock:{itemId}
+     * Legacy prefixes are retained for source compatibility with callers
+     * outside the seckill module.  New code must use the complete-key helpers
+     * below so that the hash tag is preserved.
      */
+    @Deprecated
     public static final SeckillKey stock = new SeckillKey(0, "mall:seckill:stock:");
-
-    /**
-     * 秒杀结果缓存。
-     * 0 = 排队中（消息已入队，等待消费者处理）
-     * 1 = 秒杀成功（已生成订单）
-     * -1 = 秒杀失败（库存不足或消费异常）
-     * → Key: mall:seckill:result:{itemId}:{userId}
-     */
+    @Deprecated
     public static final SeckillKey result = new SeckillKey(3600, "mall:seckill:result:");
-
-    /**
-     * 用户已购数量，用于限制每人购买件数（limit_per_user）。
-     * 每次秒杀成功后 INCR，和 limit_per_user 比较。
-     * → Key: mall:seckill:limit:{itemId}:{userId}
-     */
+    @Deprecated
     public static final SeckillKey userLimit = new SeckillKey(0, "mall:seckill:limit:");
-
-    /**
-     * 用户下单分布式锁，防止同一用户对同一秒杀商品重复提交请求。
-     * 10 秒后自动释放，配合 RedisLock 使用。
-     * → Key: mall:seckill:lock:{itemId}:{userId}
-     */
+    @Deprecated
     public static final SeckillKey userLock = new SeckillKey(10, "mall:seckill:lock:");
-
-    // ==================== 秒杀辅助 Key ====================
-
-    /**
-     * 秒杀地址隐藏（接口防刷）。
-     * 秒杀开始前不暴露真实下单 URL，用户先请求获取动态 path，
-     * 带上正确 path 才能访问秒杀接口，60 秒有效。
-     * → Key: mall:seckill:path:{itemId}:{userId}
-     */
+    @Deprecated
     public static final SeckillKey path = new SeckillKey(60, "mall:seckill:path:");
-
-    /**
-     * 秒杀数学验证码答案。
-     * 用户提交秒杀请求时需一并带上验证码，300 秒有效。
-     * → Key: mall:seckill:verify:{itemId}:{userId}
-     */
+    @Deprecated
     public static final SeckillKey verifyCode = new SeckillKey(300, "mall:seckill:verify:");
 
     private SeckillKey(int expireSeconds, String prefix) {
         super(expireSeconds, prefix);
+    }
+
+    public static String stockKey(Long itemId) {
+        return itemPrefix(itemId) + "stock";
+    }
+
+    public static String pathKey(Long itemId, Long userId) {
+        return itemPrefix(itemId) + "path:" + userId;
+    }
+
+    public static String resultKey(Long itemId, Long userId) {
+        return itemPrefix(itemId) + "result:" + userId;
+    }
+
+    public static String userLimitKey(Long itemId, Long userId) {
+        return itemPrefix(itemId) + "limit:" + userId;
+    }
+
+    /** Snapshot loaded during preheat and copied into a user's request snapshot. */
+    public static String itemSnapshotKey(Long itemId) {
+        return itemPrefix(itemId) + "snapshot";
+    }
+
+    /** Snapshot containing the path and the user's address selected by getPath. */
+    public static String requestSnapshotKey(Long itemId, Long userId) {
+        return itemPrefix(itemId) + "request:" + userId;
+    }
+
+    /** Pending message state; the item id remains the hash tag. */
+    public static String pendingKey(Long itemId, String messageId) {
+        return itemPrefix(itemId) + "pending:" + messageId;
+    }
+
+    /** Sorted-set index for pending messages of one item. */
+    public static String pendingIndexKey(Long itemId) {
+        return itemPrefix(itemId) + "pending:index";
+    }
+
+    /** Global item registry used by the compensation scanner. */
+    public static String itemIndexKey() {
+        return ROOT + "items";
+    }
+
+    private static String itemPrefix(Long itemId) {
+        if (itemId == null) {
+            throw new IllegalArgumentException("itemId must not be null");
+        }
+        return ROOT + "{" + itemId + "}:";
     }
 }
