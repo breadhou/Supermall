@@ -6,7 +6,7 @@ import com.mall.module.product.entity.vo.ProductVO;
 
 public interface ProductService {
 
-    Page<ProductVO> page(ProductPageDTO dto);
+    Page<ProductVO> listProducts(ProductPageDTO dto);
 
-    ProductVO detail(Long id);
+    ProductVO showDetail(Long id);
 }

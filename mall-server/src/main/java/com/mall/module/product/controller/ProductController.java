@@ -6,6 +6,7 @@ import com.mall.module.product.entity.dto.ProductPageDTO;
 import com.mall.module.product.entity.vo.ProductVO;
 import com.mall.module.product.service.ProductService;
 import org.springframework.beans.factory.annotation.Autowired;
+import jakarta.validation.Valid;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -19,8 +20,8 @@ public class ProductController {
     private ProductService productService;
 
     @GetMapping
-    public Result<Page<ProductVO>> listProducts(ProductPageDTO dto) {
-        Page<ProductVO> page = productService.page(dto);
+    public Result<Page<ProductVO>> listProducts(@Valid ProductPageDTO dto) {
+        Page<ProductVO> page = productService.listProducts(dto);
         Result<Page<ProductVO>> result = Result.build();
         result.success(page);
         return result;
@@ -28,7 +29,7 @@ public class ProductController {
 
     @GetMapping("/{id}")
     public Result<ProductVO> showDetails(@PathVariable Long id) {
-        ProductVO vo = productService.detail(id);
+        ProductVO vo = productService.showDetail(id);
         Result<ProductVO> result = Result.build();
         result.success(vo);
         return result;

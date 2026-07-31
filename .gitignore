@@ -38,3 +38,11 @@ build/
 ### Mac OS ###
 .DS_Store
 /CLAUDE.md
+
+### JMeter 压测输出（保留测试计划和示例文件）
+jmeter/*.csv
+jmeter/setup-user.csv
+jmeter/*.jtl
+jmeter/*.log
+jmeter/report/
+jmeter/results/

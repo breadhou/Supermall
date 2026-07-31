@@ -30,7 +30,7 @@ public class ProductServiceImpl implements ProductService {
     ProductSkuMapper skuMapper;
 
     @Override
-    public Page<ProductVO> page(ProductPageDTO dto) {
+    public Page<ProductVO> listProducts(ProductPageDTO dto) {
         Page<Product> page = new Page<>(dto.getPageNum(), dto.getPageSize());
 
         LambdaQueryWrapper<Product> wrapper = new LambdaQueryWrapper<>();
@@ -56,7 +56,7 @@ public class ProductServiceImpl implements ProductService {
     }
 
     @Override
-    public ProductVO detail(Long id) {
+    public ProductVO showDetail(Long id) {
         Product product = productMapper.selectById(id);
         if (product == null) {
             return null;

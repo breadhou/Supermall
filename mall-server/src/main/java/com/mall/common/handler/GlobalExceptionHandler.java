@@ -27,7 +27,7 @@ public class GlobalExceptionHandler {
     // 4. 兜底拦截：拦截所有其他未预料到的系统异常（防止系统直接崩溃）
     @ExceptionHandler(Exception.class)
     public Result<Void> handleException(Exception e) {
-        log.error("unknown_failure");
+        log.error("unknown_failure", e);
         return Result.fail(ResultStatus.EXCEPTION);
     }
 }

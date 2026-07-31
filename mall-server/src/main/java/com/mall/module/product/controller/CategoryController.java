@@ -19,7 +19,7 @@ public class CategoryController {
 
     @GetMapping("/categories")
     public Result<List<CategoryVO>> getCategories() {
-        List<CategoryVO> tree = categoryService.getCategoryTree();
+        List<CategoryVO> tree = categoryService.getCategories();
         Result<List<CategoryVO>> result = Result.build();
         result.success(tree);
         return result;

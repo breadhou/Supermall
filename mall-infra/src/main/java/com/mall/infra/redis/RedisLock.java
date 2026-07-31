@@ -49,9 +49,8 @@ public class RedisLock {
     /**
      * 解锁。仅当 value 匹配时才删除 key。
      */
-    public boolean unlock(String key, String value) {
+    public void unlock(String key, String value) {
         DefaultRedisScript<Long> script = new DefaultRedisScript<>(UNLOCK_LUA, Long.class);
         Long result = stringRedisTemplate.execute(script, Collections.singletonList(key), value);
-        return Long.valueOf(1).equals(result);
     }
 }

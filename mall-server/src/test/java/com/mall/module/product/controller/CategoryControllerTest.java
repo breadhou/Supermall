@@ -34,7 +34,7 @@ class CategoryControllerTest {
         vo.setSort(1);
         vo.setChildren(Collections.emptyList());
 
-        when(categoryService.getCategoryTree()).thenReturn(List.of(vo));
+        when(categoryService.getCategories()).thenReturn(List.of(vo));
 
         Result<List<CategoryVO>> result = categoryController.getCategories();
 
@@ -50,7 +50,7 @@ class CategoryControllerTest {
 
     @Test
     void getCategories_shouldReturnEmptyList_whenNoCategories() {
-        when(categoryService.getCategoryTree()).thenReturn(Collections.emptyList());
+        when(categoryService.getCategories()).thenReturn(Collections.emptyList());
 
         Result<List<CategoryVO>> result = categoryController.getCategories();
 

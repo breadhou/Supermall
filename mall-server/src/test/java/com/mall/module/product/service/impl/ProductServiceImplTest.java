@@ -53,7 +53,7 @@ class ProductServiceImplTest {
                     return page;
                 });
 
-        Page<ProductVO> result = productService.page(dto);
+        Page<ProductVO> result = productService.listProducts(dto);
 
         assertNotNull(result);
         assertEquals(0, result.getTotal());
@@ -77,7 +77,7 @@ class ProductServiceImplTest {
                     return page;
                 });
 
-        Page<ProductVO> result = productService.page(dto);
+        Page<ProductVO> result = productService.listProducts(dto);
 
         assertEquals(2, result.getTotal());
         assertEquals(2, result.getRecords().size());
@@ -104,7 +104,7 @@ class ProductServiceImplTest {
                     return page;
                 });
 
-        productService.page(dto);
+        productService.listProducts(dto);
 
         ArgumentCaptor<LambdaQueryWrapper<Product>> captor = ArgumentCaptor.forClass(LambdaQueryWrapper.class);
         verify(productMapper).selectPage(any(Page.class), captor.capture());
@@ -126,7 +126,7 @@ class ProductServiceImplTest {
                     return page;
                 });
 
-        Page<ProductVO> result = productService.page(dto);
+        Page<ProductVO> result = productService.listProducts(dto);
 
         assertEquals(1, result.getTotal());
         assertEquals("手机Pro", result.getRecords().get(0).getName());
@@ -145,7 +145,7 @@ class ProductServiceImplTest {
                     return page;
                 });
 
-        productService.page(dto);
+        productService.listProducts(dto);
 
         verify(productMapper, times(1)).selectPage(any(Page.class), any(LambdaQueryWrapper.class));
     }
@@ -156,7 +156,7 @@ class ProductServiceImplTest {
     void detail_shouldReturnNull_whenProductNotFound() {
         when(productMapper.selectById(999L)).thenReturn(null);
 
-        ProductVO result = productService.detail(999L);
+        ProductVO result = productService.showDetail(999L);
 
         assertNull(result);
         verify(skuMapper, never()).selectList(any());
@@ -174,7 +174,7 @@ class ProductServiceImplTest {
         when(skuMapper.selectList(any(LambdaQueryWrapper.class)))
                 .thenReturn(List.of(sku1, sku2));
 
-        ProductVO vo = productService.detail(productId);
+        ProductVO vo = productService.showDetail(productId);
 
         assertNotNull(vo);
         assertEquals(productId, vo.getId());
@@ -200,7 +200,7 @@ class ProductServiceImplTest {
         when(skuMapper.selectList(any(LambdaQueryWrapper.class)))
                 .thenReturn(Collections.emptyList());
 
-        ProductVO vo = productService.detail(productId);
+        ProductVO vo = productService.showDetail(productId);
 
         assertNotNull(vo);
         assertEquals("空SKU商品", vo.getName());
@@ -222,7 +222,7 @@ class ProductServiceImplTest {
         when(skuMapper.selectList(any(LambdaQueryWrapper.class)))
                 .thenReturn(List.of(expensive, cheapest));
 
-        ProductVO vo = productService.detail(productId);
+        ProductVO vo = productService.showDetail(productId);
 
         assertEquals(BigDecimal.valueOf(100), vo.getMinPrice());
     }

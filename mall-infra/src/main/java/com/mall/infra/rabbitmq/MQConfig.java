@@ -1,6 +1,8 @@
 package com.mall.infra.rabbitmq;
 
 import org.springframework.amqp.core.*;
+import org.springframework.amqp.support.converter.Jackson2JsonMessageConverter;
+import org.springframework.amqp.support.converter.MessageConverter;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
@@ -26,6 +28,14 @@ import java.util.Map;
  */
 @Configuration
 public class MQConfig {
+
+    /**
+     * 让 RabbitTemplate 和 @RabbitListener 使用 JSON 传输业务消息。
+     */
+    @Bean
+    public MessageConverter rabbitMessageConverter() {
+        return new Jackson2JsonMessageConverter();
+    }
 
     // ---- 交换机 ----
     public static final String SECKILL_EXCHANGE = "mall.seckill.direct";

@@ -26,6 +26,7 @@ spring:
     redis:
       host: localhost
       port: 6379
+      database: 1                   # 秒杀项目使用独立 Redis DB，避免影响其他项目
       # password:                   # Redis 没设密码就注释掉
       lettuce:                      # Lettuce 客户端（Spring Boot 3.x 默认）
         pool:

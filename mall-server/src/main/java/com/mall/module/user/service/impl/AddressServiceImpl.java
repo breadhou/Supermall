@@ -11,11 +11,11 @@ import com.mall.module.user.service.AddressService;
 import com.mall.security.utils.UserContext;
 import org.springframework.beans.BeanUtils;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.stereotype.Component;
+import org.springframework.stereotype.Service;
 
 import java.util.List;
 
-@Component
+@Service
 public class AddressServiceImpl implements AddressService {
 
     @Autowired

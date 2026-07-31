@@ -16,9 +16,9 @@ import com.mall.security.utils.JwtUtil;
 import com.mall.security.utils.UserContext;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.security.crypto.password.PasswordEncoder;
-import org.springframework.stereotype.Component;
+import org.springframework.stereotype.Service;
 
-@Component
+@Service
 public class UserServiceImpl implements UserService {
 
     @Autowired

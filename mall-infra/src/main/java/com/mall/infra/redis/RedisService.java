@@ -1,5 +1,6 @@
 package com.mall.infra.redis;
 
+import cn.hutool.core.convert.Convert;
 import cn.hutool.json.JSONUtil;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.redis.core.StringRedisTemplate;
@@ -23,7 +24,24 @@ public class RedisService {
     public <T> T get(KeyPrefix prefix, String key, Class<T> clazz) {
         String realKey = prefix.getPrefix() + key;
         String str = stringRedisTemplate.opsForValue().get(realKey);
-        return str == null ? null : JSONUtil.toBean(str, clazz);
+        if (str == null) {
+            return null;
+        }
+        // StringRedisTemplate 保存的是纯字符串。基础类型不会带 JSON 对象结构，
+        // 不能统一交给 JSONUtil.toBean() 按 JSONObject 解析。
+        if (isScalarType(clazz)) {
+            return Convert.convert(clazz, str);
+        }
+        return JSONUtil.toBean(str, clazz);
+    }
+
+    private boolean isScalarType(Class<?> clazz) {
+        return clazz == String.class
+                || clazz == Boolean.class
+                || clazz == Character.class
+                || clazz.isPrimitive()
+                || Number.class.isAssignableFrom(clazz)
+                || clazz.isEnum();
     }
 
     public String get(String key) {
@@ -82,6 +100,11 @@ public class RedisService {
     public Long incr(KeyPrefix prefix, String key) {
         String realKey = prefix.getPrefix() + key;
         return stringRedisTemplate.opsForValue().increment(realKey);
+    }
+
+    public Long incr(KeyPrefix prefix, String key, long delta) {
+        String realKey = prefix.getPrefix() + key;
+        return stringRedisTemplate.opsForValue().increment(realKey, delta);
     }
 
     public Long decr(KeyPrefix prefix, String key) {

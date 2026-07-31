@@ -33,7 +33,7 @@ class CategoryServiceImplTest {
         when(categoryMapper.selectList(any(LambdaQueryWrapper.class)))
                 .thenReturn(Collections.emptyList());
 
-        List<CategoryVO> tree = categoryService.getCategoryTree();
+        List<CategoryVO> tree = categoryService.getCategories();
 
         assertNotNull(tree);
         assertTrue(tree.isEmpty());
@@ -47,7 +47,7 @@ class CategoryServiceImplTest {
         when(categoryMapper.selectList(any(LambdaQueryWrapper.class)))
                 .thenReturn(List.of(cat));
 
-        List<CategoryVO> tree = categoryService.getCategoryTree();
+        List<CategoryVO> tree = categoryService.getCategories();
 
         assertEquals(1, tree.size());
         CategoryVO root = tree.get(0);
@@ -68,7 +68,7 @@ class CategoryServiceImplTest {
         when(categoryMapper.selectList(any(LambdaQueryWrapper.class)))
                 .thenReturn(List.of(cat2, cat1));
 
-        List<CategoryVO> tree = categoryService.getCategoryTree();
+        List<CategoryVO> tree = categoryService.getCategories();
 
         assertEquals(2, tree.size());
         assertEquals("服装", tree.get(0).getName());
@@ -86,7 +86,7 @@ class CategoryServiceImplTest {
         when(categoryMapper.selectList(any(LambdaQueryWrapper.class)))
                 .thenReturn(List.of(root, child1, child2));
 
-        List<CategoryVO> tree = categoryService.getCategoryTree();
+        List<CategoryVO> tree = categoryService.getCategories();
 
         assertEquals(1, tree.size());
         CategoryVO rootVO = tree.get(0);
@@ -114,7 +114,7 @@ class CategoryServiceImplTest {
         when(categoryMapper.selectList(any(LambdaQueryWrapper.class)))
                 .thenReturn(List.of(root, child, grandchild1, grandchild2));
 
-        List<CategoryVO> tree = categoryService.getCategoryTree();
+        List<CategoryVO> tree = categoryService.getCategories();
 
         assertEquals(1, tree.size());
 
@@ -146,7 +146,7 @@ class CategoryServiceImplTest {
         when(categoryMapper.selectList(any(LambdaQueryWrapper.class)))
                 .thenReturn(List.of(root1, child1, root2, child2));
 
-        List<CategoryVO> tree = categoryService.getCategoryTree();
+        List<CategoryVO> tree = categoryService.getCategories();
 
         assertEquals(2, tree.size());
         assertEquals("电子产品", tree.get(0).getName());
@@ -167,7 +167,7 @@ class CategoryServiceImplTest {
         when(categoryMapper.selectList(any(LambdaQueryWrapper.class)))
                 .thenReturn(List.of(orphan));
 
-        List<CategoryVO> tree = categoryService.getCategoryTree();
+        List<CategoryVO> tree = categoryService.getCategories();
 
         // 从 parentId=0 开始构建，孤立节点不会出现在树中
         assertTrue(tree.isEmpty());
@@ -181,7 +181,7 @@ class CategoryServiceImplTest {
         when(categoryMapper.selectList(any(LambdaQueryWrapper.class)))
                 .thenReturn(List.of(cat));
 
-        List<CategoryVO> tree = categoryService.getCategoryTree();
+        List<CategoryVO> tree = categoryService.getCategories();
 
         CategoryVO vo = tree.get(0);
         assertEquals(1L, vo.getId());

@@ -6,21 +6,21 @@ import com.mall.module.product.entity.vo.CategoryVO;
 import com.mall.module.product.mapper.CategoryMapper;
 import com.mall.module.product.service.CategoryService;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.stereotype.Component;
+import org.springframework.stereotype.Service;
 
 import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 import java.util.stream.Collectors;
 
-@Component
+@Service
 public class CategoryServiceImpl implements CategoryService {
 
     @Autowired
     private CategoryMapper categoryMapper;
 
     @Override
-    public List<CategoryVO> getCategoryTree() {
+    public List<CategoryVO> getCategories() {
         // 1. 一次查出全表，按 sort 升序
         List<Category> all = categoryMapper.selectList(
                 new LambdaQueryWrapper<Category>().orderByAsc(Category::getSort)
