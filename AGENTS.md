@@ -255,6 +255,8 @@ MyBatis-Plus 配置了逻辑删除字段 `deleted`（`0`=未删除，`1`=已删�
 - 正式单机基线使用全新商品 `itemId=998000000000000006`、1,000 个全新用户和 1,000,000 库存；1,000 个执行请求在 59,671 ms 的首尾窗口内完成，实际到达率 16.76 req/s（目标 1,000 samples/min），HTTP 错误 0，状态码全部为 200，平均耗时 10.89 ms，P95 18 ms，P99 23 ms，最大 36 ms。
 - 正式基线完成后的数据一致性：`seckill_item.stock=999000`，Redis DB1 的 `mall:seckill:{998000000000000006}:stock=999000`，`seckill_order` 新增 1,000 条且 `distinct user_id=1000`；RabbitMQ 主队列、死信队列、Redis pending 均为 0，publisher failed/nack 指标为 0。
 - 随后使用全新 `itemId=999000000000000006` 做短时高率探针：1,000 个合法请求在 1,050 ms 内完成，实际约 952.38 req/s，HTTP 错误 0，平均耗时 56.15 ms，P95 210 ms，P99 244 ms，最大 255 ms；DB/Redis 库存均为 999000，订单 1,000 条且用户去重，主/死信队列和 pending 均为 0。
+- 单机 2k 目标探针使用 `itemId=100000000000000006`：1,000 个请求实际在 965 ms 内到达，约 1,036.27 req/s；995 个 HTTP 200，5 个 `HttpHostConnectException`，成功请求平均 220.66 ms，P95 445 ms，P99 528 ms，DB/Redis 均扣减 995，MQ/pending 均清空。
+- 单机 5k 目标探针使用 `itemId=100200000000000006`：1,000 个请求实际在 792 ms 内到达，约 1,262.63 req/s；776 个 HTTP 200，224 个 `HttpHostConnectException`，成功请求平均 158.14 ms，P95 364 ms，P99 381 ms，DB/Redis 均扣减 776，MQ/pending 均清空。
 - 本轮资源采样中 Windows 总内存约 15.21 GB，最低可用约 3.02 GB（约 80.1% 已用），应用 JVM 工作集约 0.38 GB，WSL 可用内存约 6.6 GB；本轮未观察到内存耗尽，但更高流量和多实例测试仍需保留约 3 GB 以上主机余量。
 - 本轮测试通过 WSL 地址 `172.25.212.154` 连接 Redis `6379` 和 RabbitMQ AMQP `5672`，RabbitMQ 管理端 `15672` 与应用 `8081` 可用；WSL Ubuntu 正在运行，但 Windows `docker` 命令不可用。若下次环境已停止，恢复前需重新确认服务端口，并以 `--server.port=8081 --spring.profiles.active=loadtest` 启动应用，同时临时覆盖 Redis/RabbitMQ host。
-- 持续测试的验收仍需分别统计 HTTP 接收 QPS 与订单消费者落库 QPS，并检查 JTL 时间分布、连接错误、Redis/MySQL 库存、去重订单、RabbitMQ 主/死信队列、Redis pending 及 `/actuator/metrics`；当前仅证明约 16.7 req/s 的 60 秒稳定到达和约 952 req/s 的短时探针，不能宣称已达到万级持续 QPS。下一步高流量测试需要更多独立用户/负载机，并逐级提高目标到达率。
+- 单机阶段结论：16.7 req/s 可稳定持续 60 秒；约 952 req/s 的短时探针全部成功；将目标提高到 2k/5k 后，JMeter 实际到达率受单机连接接入能力限制在约 1,036/1,263 req/s，并出现连接拒绝。业务成功请求始终保持库存、订单、Redis 和 MQ 一致，未发现超卖、重复订单或消息丢失。单机验证到此结束，10k req/s 的 60 秒云平台/多实例验证留到项目功能完成后。
