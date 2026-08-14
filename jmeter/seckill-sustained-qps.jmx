@@ -1,0 +1,173 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<jmeterTestPlan version="1.2" properties="5.0" jmeter="5.6.3">
+  <hashTree>
+    <TestPlan guiclass="TestPlanGui" testclass="TestPlan" testname="Supermall Seckill Sustained QPS" enabled="true">
+      <stringProp name="TestPlan.comments">Sustained seckill execution plan. Edit the numeric PreciseThroughputTimer throughput value before each run. Set sendHttp=false for parser-only smoke runs.</stringProp>
+      <boolProp name="TestPlan.functional_mode">false</boolProp>
+      <boolProp name="TestPlan.serialize_threadgroups">false</boolProp>
+      <elementProp name="TestPlan.user_defined_variables" elementType="Arguments" guiclass="ArgumentsPanel" testclass="Arguments" testname="User Defined Variables" enabled="true">
+        <collectionProp name="Arguments.arguments"/>
+      </elementProp>
+      <stringProp name="TestPlan.user_define_classpath"/>
+    </TestPlan>
+    <hashTree>
+      <SetupThreadGroup guiclass="SetupThreadGroupGui" testclass="SetupThreadGroup" testname="One-time Redis Stock Preheat" enabled="true">
+        <stringProp name="ThreadGroup.on_sample_error">continue</stringProp>
+        <elementProp name="ThreadGroup.main_controller" elementType="LoopController" guiclass="LoopControlPanel" testclass="LoopController" testname="Run Once" enabled="true">
+          <boolProp name="LoopController.continue_forever">false</boolProp>
+          <stringProp name="LoopController.loops">1</stringProp>
+        </elementProp>
+        <stringProp name="ThreadGroup.num_threads">1</stringProp>
+        <stringProp name="ThreadGroup.ramp_time">0</stringProp>
+        <longProp name="ThreadGroup.start_time">1700000000000</longProp>
+        <longProp name="ThreadGroup.end_time">1700000000000</longProp>
+        <boolProp name="ThreadGroup.scheduler">false</boolProp>
+        <stringProp name="ThreadGroup.duration"/>
+        <stringProp name="ThreadGroup.delay"/>
+      </SetupThreadGroup>
+      <hashTree>
+        <CSVDataSet guiclass="TestBeanGUI" testclass="CSVDataSet" testname="Preheat Token CSV" enabled="true">
+          <stringProp name="delimiter">,</stringProp>
+          <stringProp name="fileEncoding">UTF-8</stringProp>
+          <stringProp name="filename">${__P(preheatFile,jmeter/preheat-token.csv)}</stringProp>
+          <boolProp name="ignoreFirstLine">true</boolProp>
+          <boolProp name="quotedData">true</boolProp>
+          <boolProp name="recycle">false</boolProp>
+          <stringProp name="shareMode">shareMode.all</stringProp>
+          <boolProp name="stopThread">true</boolProp>
+          <stringProp name="variableNames">preheatToken,preheatPath</stringProp>
+        </CSVDataSet>
+        <hashTree/>
+        <ConfigTestElement guiclass="HttpDefaultsGui" testclass="ConfigTestElement" testname="HTTP Defaults" enabled="true">
+          <stringProp name="HTTPSampler.domain">${__P(host,localhost)}</stringProp>
+          <stringProp name="HTTPSampler.port">${__P(port,8080)}</stringProp>
+          <stringProp name="HTTPSampler.protocol">http</stringProp>
+          <stringProp name="HTTPSampler.contentEncoding">UTF-8</stringProp>
+          <stringProp name="HTTPSampler.connect_timeout">3000</stringProp>
+          <stringProp name="HTTPSampler.response_timeout">10000</stringProp>
+        </ConfigTestElement>
+        <hashTree/>
+        <HeaderManager guiclass="HeaderPanel" testclass="HeaderManager" testname="JSON Request Headers" enabled="true">
+          <collectionProp name="HeaderManager.headers">
+            <elementProp name="Content-Type" elementType="Header">
+              <stringProp name="Header.name">Content-Type</stringProp>
+              <stringProp name="Header.value">application/json</stringProp>
+            </elementProp>
+          </collectionProp>
+        </HeaderManager>
+        <hashTree/>
+        <IfController guiclass="IfControllerPanel" testclass="IfController" testname="Send Preheat Request" enabled="true">
+          <stringProp name="IfController.condition">${__P(sendHttp,true)}</stringProp>
+          <boolProp name="IfController.evaluateAll">false</boolProp>
+          <boolProp name="IfController.useExpression">true</boolProp>
+        </IfController>
+        <hashTree>
+          <HTTPSamplerProxy guiclass="HttpTestSampleGui" testclass="HTTPSamplerProxy" testname="Preheat Seckill Stock" enabled="true">
+            <stringProp name="HTTPSampler.path">/api/seckill/${__P(itemId,940000000000000000)}/preheat</stringProp>
+            <stringProp name="HTTPSampler.method">POST</stringProp>
+            <boolProp name="HTTPSampler.follow_redirects">true</boolProp>
+            <boolProp name="HTTPSampler.auto_redirects">false</boolProp>
+            <boolProp name="HTTPSampler.use_keepalive">true</boolProp>
+            <boolProp name="HTTPSampler.DO_MULTIPART_POST">false</boolProp>
+            <stringProp name="HTTPSampler.embedded_url_re"/>
+            <elementProp name="HTTPsampler.Arguments" elementType="Arguments" guiclass="HTTPArgumentsPanel" testclass="Arguments" testname="Request Parameters" enabled="true">
+              <collectionProp name="Arguments.arguments"/>
+            </elementProp>
+          </HTTPSamplerProxy>
+          <hashTree>
+            <HeaderManager guiclass="HeaderPanel" testclass="HeaderManager" testname="Preheat Authorization" enabled="true">
+              <collectionProp name="HeaderManager.headers">
+                <elementProp name="Authorization" elementType="Header">
+                  <stringProp name="Header.name">Authorization</stringProp>
+                  <stringProp name="Header.value">Bearer ${preheatToken}</stringProp>
+                </elementProp>
+              </collectionProp>
+            </HeaderManager>
+            <hashTree/>
+          </hashTree>
+        </hashTree>
+      </hashTree>
+
+      <ThreadGroup guiclass="ThreadGroupGui" testclass="ThreadGroup" testname="Sustained Seckill Execution" enabled="true">
+        <stringProp name="ThreadGroup.on_sample_error">continue</stringProp>
+        <elementProp name="ThreadGroup.main_controller" elementType="LoopController" guiclass="LoopControlPanel" testclass="LoopController" testname="Configured Loop Count" enabled="true">
+          <boolProp name="LoopController.continue_forever">false</boolProp>
+          <stringProp name="LoopController.loops">${__P(loops,1)}</stringProp>
+        </elementProp>
+        <stringProp name="ThreadGroup.num_threads">${__P(threads,100)}</stringProp>
+        <stringProp name="ThreadGroup.ramp_time">${__P(rampUp,10)}</stringProp>
+        <longProp name="ThreadGroup.start_time">1700000000000</longProp>
+        <longProp name="ThreadGroup.end_time">1700000000000</longProp>
+        <boolProp name="ThreadGroup.scheduler">true</boolProp>
+        <stringProp name="ThreadGroup.duration">${__P(duration,60)}</stringProp>
+        <stringProp name="ThreadGroup.delay">0</stringProp>
+      </ThreadGroup>
+      <hashTree>
+        <CSVDataSet guiclass="TestBeanGUI" testclass="CSVDataSet" testname="Token and Dynamic Path CSV" enabled="true">
+          <stringProp name="delimiter">,</stringProp>
+          <stringProp name="fileEncoding">UTF-8</stringProp>
+          <stringProp name="filename">${__P(tokenPathFile,jmeter/token-paths.csv)}</stringProp>
+          <boolProp name="ignoreFirstLine">true</boolProp>
+          <boolProp name="quotedData">true</boolProp>
+          <boolProp name="recycle">false</boolProp>
+          <stringProp name="shareMode">shareMode.all</stringProp>
+          <boolProp name="stopThread">true</boolProp>
+          <stringProp name="variableNames">token,path</stringProp>
+        </CSVDataSet>
+        <hashTree/>
+        <ConfigTestElement guiclass="HttpDefaultsGui" testclass="ConfigTestElement" testname="HTTP Defaults" enabled="true">
+          <stringProp name="HTTPSampler.domain">${__P(host,localhost)}</stringProp>
+          <stringProp name="HTTPSampler.port">${__P(port,8080)}</stringProp>
+          <stringProp name="HTTPSampler.protocol">http</stringProp>
+          <stringProp name="HTTPSampler.contentEncoding">UTF-8</stringProp>
+          <stringProp name="HTTPSampler.connect_timeout">3000</stringProp>
+          <stringProp name="HTTPSampler.response_timeout">10000</stringProp>
+        </ConfigTestElement>
+        <hashTree/>
+        <HeaderManager guiclass="HeaderPanel" testclass="HeaderManager" testname="JWT Request Headers" enabled="true">
+          <collectionProp name="HeaderManager.headers">
+            <elementProp name="Content-Type" elementType="Header">
+              <stringProp name="Header.name">Content-Type</stringProp>
+              <stringProp name="Header.value">application/json</stringProp>
+            </elementProp>
+            <elementProp name="Authorization" elementType="Header">
+              <stringProp name="Header.name">Authorization</stringProp>
+              <stringProp name="Header.value">Bearer ${token}</stringProp>
+            </elementProp>
+          </collectionProp>
+        </HeaderManager>
+        <hashTree/>
+        <org.apache.jmeter.timers.poissonarrivals.PreciseThroughputTimer guiclass="TestBeanGUI" testclass="org.apache.jmeter.timers.poissonarrivals.PreciseThroughputTimer" testname="Precise Throughput Timer" enabled="true">
+          <doubleProp>
+            <name>allowedThroughputSurplus</name>
+            <value>1.0</value>
+          </doubleProp>
+          <intProp name="batchSize">1</intProp>
+          <intProp name="batchThreadDelay">0</intProp>
+          <longProp name="duration">60</longProp>
+          <intProp name="exactLimit">10000</intProp>
+          <longProp name="randomSeed">1</longProp>
+          <doubleProp>
+            <name>throughput</name>
+            <value>1000.0</value>
+          </doubleProp>
+          <intProp name="throughputPeriod">60</intProp>
+        </org.apache.jmeter.timers.poissonarrivals.PreciseThroughputTimer>
+        <hashTree/>
+        <HTTPSamplerProxy guiclass="HttpTestSampleGui" testclass="HTTPSamplerProxy" testname="Execute Seckill" enabled="true">
+            <stringProp name="HTTPSampler.path">/api/seckill/${__P(itemId,940000000000000000)}/${path}</stringProp>
+            <stringProp name="HTTPSampler.method">POST</stringProp>
+            <boolProp name="HTTPSampler.follow_redirects">true</boolProp>
+            <boolProp name="HTTPSampler.auto_redirects">false</boolProp>
+            <boolProp name="HTTPSampler.use_keepalive">true</boolProp>
+            <boolProp name="HTTPSampler.DO_MULTIPART_POST">false</boolProp>
+            <stringProp name="HTTPSampler.embedded_url_re"/>
+            <elementProp name="HTTPsampler.Arguments" elementType="Arguments" guiclass="HTTPArgumentsPanel" testclass="Arguments" testname="Request Parameters" enabled="true">
+              <collectionProp name="Arguments.arguments"/>
+            </elementProp>
+        </HTTPSamplerProxy>
+        <hashTree/>
+      </hashTree>
+    </hashTree>
+  </hashTree>
+</jmeterTestPlan>

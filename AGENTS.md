@@ -127,7 +127,7 @@ supermall/
 | 阶段三 | 商品模块 | category、product、product_sku、review | 已完成 |
 | 阶段四 | 购物车 | cart_item | 已完成 |
 | 阶段五 | 订单模块 | order、order_item、refund | 已完成 |
-| 阶段六 | 秒杀模块 | seckill_activity、seckill_item、seckill_order | 核心实现已完成，集成测试和持续压测待测试环境恢复 |
+| 阶段六 | 秒杀模块 | seckill_activity、seckill_item、seckill_order | 核心实现和集成测试已完成，持续压测待验证 |
 | 阶段七 | 优惠券 | coupon、user_coupon | 待实现 |
 | 阶段八 | 支付物流 | payment_record、logistics | 待实现 |
 | 阶段九 | 商家后台 | merchant、admin_user | 待实现 |
@@ -173,7 +173,7 @@ supermall/
 - Controller 路径：`POST/GET/PUT /api/orders`；DTO 使用 `@Valid` 校验。
 - 18 个单元测试（`OrderServiceImplTest`），全部通过。
 
-### 阶段六：秒杀模块（核心实现已完成，验证待环境恢复）
+### 阶段六：秒杀模块（核心实现和集成验证已完成，持续压测待验证）
 
 当前工作区已完成或开始实现以下基础部分：
 
@@ -196,9 +196,9 @@ supermall/
 尚待补齐或验证：
 
 - 订单落库成功但 Redis 结果更新失败的故障注入验证；对应的定时补偿任务已实现。
-- 持续流量压测（瞬时突发压测已完成，仍需单独验证稳定到达率）。
+- 持续流量压测（已完成 16.76 req/s 恒定到达基线，目标高流量和多实例持续压测仍待验证）。
 - 多 API 实例、Redis/RabbitMQ 集群和独立订单消费者的生产式压测。
-- 本轮测试环境已关闭，未重新执行真实集成测试和 JMeter 压测。
+- 2026-08-11 曾恢复测试环境并完成真实压测；应用使用 `loadtest` profile 监听 `8081`，独立压测商品为 `994000000000000006`。该轮结束后测试进程已停止，当前不能假定 Redis、RabbitMQ AMQP 或应用仍在运行。
 
 ## 数据库
 
@@ -229,4 +229,32 @@ MyBatis-Plus 配置了逻辑删除字段 `deleted`（`0`=未删除，`1`=已删�
 - 新增 `/actuator/metrics` 指标、Lua/confirm/消费者耗时和补偿计数；本地 `loadtest` profile 将 path 有效期设为 15 分钟，生产默认 60 秒。
 - 提交 `ba495db` 已落地本阶段代码和测试；MCP IntelliJ JUnit 已运行全部 14 个测试类，均以 `exitCode=0` 通过。
 - 本轮 IDE 终端没有可用的 `mvn` 命令，因此没有重复执行 Maven 全量命令；未启动 MySQL、Redis 或 RabbitMQ。
-- 万级持续到达率、多实例压测及故障注入验证仍需在 Redis/RabbitMQ/MySQL 实例环境恢复后执行。
+- 万级持续到达率、多实例压测及故障注入验证仍待在已恢复的测试环境基础上继续执行；多实例阶段还需准备对应的部署资源。
+
+### 2026-08-11 真实突发压测记录
+
+- 测试环境：MySQL、Redis、RabbitMQ 已启动；应用使用 `loadtest` profile 运行在 `http://localhost:8081`。
+- 测试数据：独立 `itemId=994000000000000006`，每轮预热库存为 1,000,000，未复用集成测试商品和用户。
+
+| 档位 | 执行请求 | 连接失败 | 成功请求平均耗时 | 成功请求最大耗时 |
+|------|----------|----------|------------------|------------------|
+| 100 线程，30 秒升压 | 100/100 | 0 | 60.2 ms | 96 ms |
+| 200 线程，30 秒升压 | 200/200 | 0 | 102.4 ms | 169 ms |
+| 400 线程，30 秒升压 | 380/400 | 20，全部为 `HttpHostConnectException` | 152.0 ms | 220 ms |
+
+- 三轮均在各自预热后执行，成功请求/订单分别为 100、200、380；最终检查时数据库库存和 Redis 库存均为 999,320，`seckill_order` 累计 680 条且 `distinct user` 为 680；RabbitMQ 主队列、死信队列和 Redis pending 均为 0。
+- 本轮是线程对齐的一次性突发压测，不能据此认定持续 QPS；400 线程的 20 个失败属于连接建立失败，不是秒杀业务错误。下一步使用新的恒定吞吐压测计划验证稳定到达率。
+
+### 2026-08-14 当前工作状态：恒定吞吐单机基线已完成
+
+- 已提交代码、前一轮进度文档和恒定吞吐验证计划：`ba495db feat: optimize seckill entry throughput`、`03ec8b7 docs: update seckill progress and load test notes`、`a7777c5 test: add sustained seckill throughput validation`。
+- 新增并验证 `jmeter/seckill-sustained-qps.jmx`，该计划只压测合法的执行请求，并保留一次性库存预热线程组。
+- JMeter 5.6.3 在当前 JDK 22 环境下执行 JSR223/Groovy 时出现 `Unsupported class file major version 66`，因此计划已移除对该脚本路径的依赖。
+- `ConstantThroughputTimer` 在该计划中未形成共享限速（`calcMode=4`、`3` 的 A/B 运行均在约 1 秒内完成）；现已改用 JMeter 内置 `PreciseThroughputTimer`，并通过 `threads=0` 非 GUI 解析验证。
+- 之前对 `item995`、`item996` 的运行约 1 秒内完成约 1,000 个请求，计时器未生效，不能记录为持续 QPS；这两个商品已经产生订单，后续不得复用。`item997000000000000006` 仅用于计时器校准，也不作为正式性能结果。
+- 正式单机基线使用全新商品 `itemId=998000000000000006`、1,000 个全新用户和 1,000,000 库存；1,000 个执行请求在 59,671 ms 的首尾窗口内完成，实际到达率 16.76 req/s（目标 1,000 samples/min），HTTP 错误 0，状态码全部为 200，平均耗时 10.89 ms，P95 18 ms，P99 23 ms，最大 36 ms。
+- 正式基线完成后的数据一致性：`seckill_item.stock=999000`，Redis DB1 的 `mall:seckill:{998000000000000006}:stock=999000`，`seckill_order` 新增 1,000 条且 `distinct user_id=1000`；RabbitMQ 主队列、死信队列、Redis pending 均为 0，publisher failed/nack 指标为 0。
+- 随后使用全新 `itemId=999000000000000006` 做短时高率探针：1,000 个合法请求在 1,050 ms 内完成，实际约 952.38 req/s，HTTP 错误 0，平均耗时 56.15 ms，P95 210 ms，P99 244 ms，最大 255 ms；DB/Redis 库存均为 999000，订单 1,000 条且用户去重，主/死信队列和 pending 均为 0。
+- 本轮资源采样中 Windows 总内存约 15.21 GB，最低可用约 3.02 GB（约 80.1% 已用），应用 JVM 工作集约 0.38 GB，WSL 可用内存约 6.6 GB；本轮未观察到内存耗尽，但更高流量和多实例测试仍需保留约 3 GB 以上主机余量。
+- 本轮测试通过 WSL 地址 `172.25.212.154` 连接 Redis `6379` 和 RabbitMQ AMQP `5672`，RabbitMQ 管理端 `15672` 与应用 `8081` 可用；WSL Ubuntu 正在运行，但 Windows `docker` 命令不可用。若下次环境已停止，恢复前需重新确认服务端口，并以 `--server.port=8081 --spring.profiles.active=loadtest` 启动应用，同时临时覆盖 Redis/RabbitMQ host。
+- 持续测试的验收仍需分别统计 HTTP 接收 QPS 与订单消费者落库 QPS，并检查 JTL 时间分布、连接错误、Redis/MySQL 库存、去重订单、RabbitMQ 主/死信队列、Redis pending 及 `/actuator/metrics`；当前仅证明约 16.7 req/s 的 60 秒稳定到达和约 952 req/s 的短时探针，不能宣称已达到万级持续 QPS。下一步高流量测试需要更多独立用户/负载机，并逐级提高目标到达率。

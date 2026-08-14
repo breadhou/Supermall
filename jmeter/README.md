@@ -100,4 +100,30 @@ powershell -ExecutionPolicy Bypass -File .\jmeter\prepare-token-paths.ps1 `
 - 纯执行突发压测中，450 并发最后一轮 450/450 业务成功，平均 219.8ms、P95 345ms、P99 388ms，约 2,103 瞬时 QPS；455/460/475 并发出现部分 `HttpHostConnectException`。该结果是本机突发边界，不代表稳定持续 QPS。
 - 秒杀入口优化已提交为 `ba495db`：执行阶段使用 Redis 快照和 Lua 原子预占，publisher confirm 成功后才返回 `WAITING`，并加入 pending/死信补偿和指标。
 - 本地 `loadtest` profile 将动态 path 有效期设为 15 分钟，生产默认仍为 60 秒；压测仍需使用全新用户和足够库存。
-- 当前 MySQL、Redis、RabbitMQ 测试环境已关闭，本轮未重新执行集成测试、稳定到达率压测或多实例压测。环境恢复后按 `5000 → 8000 → 10000 req/s` 阶梯继续验证，并分别统计 HTTP 接收 QPS 和订单落库 QPS。
+- 截至 2026-07-31，MySQL、Redis、RabbitMQ 测试环境曾关闭，因此当时未执行稳定到达率压测或多实例压测；2026-08-11 已恢复环境并完成新的突发压测，结果见下节。
+
+## 2026-08-11 真实突发压测记录
+
+- 应用使用 `loadtest` profile 运行在 `http://localhost:8081`；MySQL、Redis、RabbitMQ 均已启动。
+- 本轮使用独立 `itemId=994000000000000006`，每轮预热库存为 1,000,000。
+
+| 档位 | 执行请求 | 连接失败 | 成功请求平均耗时 | 成功请求最大耗时 |
+|------|----------|----------|------------------|------------------|
+| 100 线程，30 秒升压 | 100/100 | 0 | 60.2 ms | 96 ms |
+| 200 线程，30 秒升压 | 200/200 | 0 | 102.4 ms | 169 ms |
+| 400 线程，30 秒升压 | 380/400 | 20，全部为 `HttpHostConnectException` | 152.0 ms | 220 ms |
+
+三轮均在各自预热后执行，成功请求/订单分别为 100、200、380；最终检查时数据库库存和 Redis 库存均为 999,320；`seckill_order` 累计 680 条且 `distinct user` 为 680；RabbitMQ 主队列、死信队列和 Redis pending 均为 0。
+
+这仍是线程对齐的一次性突发压测，不能作为持续 QPS 结论。400 线程的 20 个失败均为连接建立失败，不是业务层错误。下一步使用新的恒定吞吐压测计划，再验证稳定到达率，并分别统计 HTTP 接收 QPS 与订单落库 QPS。
+
+## 2026-08-14 恒定吞吐单机基线
+
+- `seckill-sustained-qps.jmx` 已改用 JMeter 内置 `PreciseThroughputTimer`。`ConstantThroughputTimer` 的共享模式在本计划中未生效，不能继续使用；JMeter 5.6.3 在 JDK 22 下也不再依赖 JSR223/Groovy 脚本。
+- 计时器校准使用 `itemId=997000000000000006`，100 个合法请求首尾跨度约 4.8 秒且无 HTTP 错误；该商品只用于校准，不能作为性能结果。
+- 正式测试使用全新 `itemId=998000000000000006`、1,000 个新用户、1,000,000 库存，1,000 个执行请求在 59.671 秒内完成，实际到达率 16.76 req/s（1,000 samples/min），HTTP 错误 0，平均 10.89 ms，P95 18 ms，P99 23 ms，最大 36 ms。
+- 测试结束后 `seckill_item` 和 Redis DB1 库存均为 999,000；新增秒杀订单 1,000 条且用户去重数为 1,000；RabbitMQ 主队列/死信队列、Redis pending 均为 0，publisher confirm/ack/nack 无异常。
+- 随后使用全新 `itemId=999000000000000006` 做短时高率探针：1,000 个合法请求在 1.050 秒内完成，实际约 952.38 req/s，HTTP 错误 0，平均 56.15 ms，P95 210 ms，P99 244 ms，最大 255 ms；DB/Redis 库存均为 999,000，订单 1,000 条且用户去重，MQ/pending 均清空。
+- Windows 主机本轮最低可用内存约 3.02 GB，JVM 工作集约 0.38 GB，未观察到内存耗尽。该结果是单机低速恒定到达基线，不是 1,000 req/s，更不是万级 QPS；后续高流量测试需要逐级提高 `PreciseThroughputTimer` 目标并使用更多独立用户/负载机。
+
+高率探针只持续约 1 秒，不能替代 60 秒持续验收；正式计划文件在探针结束后已恢复为 1,000 samples/min（约 16.7 req/s）。
