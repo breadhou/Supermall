@@ -332,6 +332,27 @@ MyBatis-Plus 配置了逻辑删除字段 `deleted`（`0`=未删除，`1`=已删�
 - 压测前先准备高库存活动和带默认收货地址的测试用户，再执行库存预热；不要在每个线程中重复预热库存。
 - 非 GUI 模式执行 JMeter，结果文件放在 `jmeter/runs/` 下的本地输出目录，不提交用户密码、JTL 或 HTML 报告。
 - **`jmeter/runs/` 内含真实 JWT 和明文密码**（`token-paths.csv`、`*-users.csv`），已在 `.gitignore` 中整体排除；`jmeter/report/`、`jmeter/results/`、顶层 `jmeter/*.jtl` 同样忽略。禁止用 `git add -f` 强制加入。
+
+### 待办：移除压测脚本的默认口令（2026-09-16 记录，尚未执行）
+
+`jmeter/prepare-users.ps1:5` 把 `LoadTest@123456` 作为 `$Password` 的**参数默认值**，`jmeter/README.md:29` 也明文写了该口令。两者已随 `f318b3e` 推送到公开仓库。
+
+**为什么值得改**：这是「默认凭据」模式。将来若本项目部署到公网、且有人运行该脚本时忘记覆盖参数，就会启用一个人尽皆知的密码。公网扫描器会专门 grep GitHub 找 `[string]$Password = '...'` 这类模式。
+
+**为什么优先级不高**：这些是本机测试夹具 —— MySQL 与应用都只监听 `localhost`，没有对外暴露的服务可以用这组凭据登录，因此当前不可直接利用。真正的风险是**未来部署时的疏忽**，不是当下的泄漏。
+
+**建议改法**：
+
+```powershell
+param(
+    [Parameter(Mandatory=$true)][string]$Password,
+    ...
+)
+```
+
+同时把 `jmeter/README.md` 的明文示例改为读取 `$env:LOADTEST_PASSWORD`。
+
+**明确不做的事**：不重写 git 历史。旧口令会留在 `f318b3e` 中，已接受 —— 该值不含真实资产，force-push 的代价（打断所有基于旧历史的克隆）高于收益。若日后决定重写，需另行确认。
 - 当前压测测试计划为 `jmeter/seckill-load-test.jmx`，用户生成脚本为 `jmeter/prepare-users.ps1`，数据脚本为 `jmeter/prepare-seckill-data.sql`。
 - 已完成第一轮 100 线程压测：30 秒升压、60 秒测试窗口，402 个采样全部 HTTP 成功；100 个新用户实际生成 100 条秒杀订单，MySQL 与 Redis 库存均由 978 降至 878，RabbitMQ 主队列和死信队列均无积压。
 - 本轮结果文件：`jmeter/results/formal-100t-20260731152048.jtl`，HTML 报告目录：`jmeter/report/formal-100t-20260731152048/`。
