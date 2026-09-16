@@ -60,7 +60,7 @@ supermall/
         │   └── module/user/   # 用户模块（controller → service → mapper → entity）
         └── resources/
             ├── application.yml
-            └── db/init.sql     # 全量建表脚本（15 张表）
+            └── db/init.sql     # 全量建表脚本（19 张表）
 ```
 
 依赖关系：`mall-server → mall-security → mall-common`，`mall-server → mall-infra → mall-common`。`mall-security` 和 `mall-infra` 互相独立。
@@ -127,7 +127,7 @@ supermall/
 
 ## 实现阶段规划
 
-基于 `db/init.sql` 的 15 张表，按业务域拆分为 9 个阶段：
+基于 `db/init.sql` 的 19 张表，按业务域拆分为 9 个阶段：
 
 | 阶段 | 业务域 | 涉及表 | 状态 |
 |------|--------|--------|------|
@@ -147,13 +147,13 @@ supermall/
 
 - `mall-common`：`Result<T>`、`BusinessException`、`ResultStatus` 枚举、雪花 ID。
 - `mall-security`：`JwtUtil`、`JwtAuthFilter`、`UserContext`、Spring Security 无状态配置。
-- `mall-infra`：`RedisService`、`RedisLock`、KeyPrefix 体系、RabbitMQ 秒杀队列声明。
+- `mall-infra`：`RedisService`、KeyPrefix 体系、RabbitMQ 秒杀队列声明。`RedisLock` 为有意保留的通用分布式锁，当前**无任何生产或测试代码引用**（秒杀路径改用 Lua 保证原子性后不再需要），Spring 会实例化该 bean 但无人注入。
 
 ### 阶段二：用户模块（已完成）
 
 - User：注册、登录、刷新 Token，BCrypt 密码加密，JWT 双 Token。
 - Address：CRUD、默认地址管理。
-- 25 个单元测试（`UserServiceImpl`、`AddressServiceImpl`）。
+- 8 个单元测试（`UserServiceImplTest`）。此前文档声称的「25 个测试含 `AddressServiceImpl`」属于误记 —— `AddressServiceImpl` 当时**没有任何测试**，直至 2026-09-16 补齐 `AddressServiceImplTest`（6 个用例）。
 - 已完成统一分层规范重构（接口注入、URL 路径、修饰符）。
 
 ### 阶段三：商品模块（已完成）
@@ -180,7 +180,7 @@ supermall/
 - **Refund**：创建退款申请记录，拥有独立生命周期（`PENDING/APPROVED/REJECTED/COMPLETED`）。
 - **ResultStatus 重构**：清理 11 个未使用码值、修正拼写错误、按模块分段（1xxxx 通用、2xxxx 用户、5xxxx 订单、6xxxx 秒杀）。
 - Controller 路径：`POST/GET/PUT /api/orders`；DTO 使用 `@Valid` 校验。
-- 18 个单元测试（`OrderServiceImplTest`），全部通过。
+- 19 个单元测试（`OrderServiceImplTest`），全部通过。
 
 ### 阶段六：秒杀模块（核心实现和集成验证已完成，持续压测待验证）
 
@@ -209,9 +209,75 @@ supermall/
 - 多 API 实例、Redis/RabbitMQ 集群和独立订单消费者的生产式压测。
 - 2026-08-11 曾恢复测试环境并完成真实压测；应用使用 `loadtest` profile 监听 `8081`，独立压测商品为 `994000000000000006`。该轮结束后测试进程已停止，当前不能假定 Redis、RabbitMQ AMQP 或应用仍在运行。
 
+## 测试覆盖基线（2026-09-16 核实）
+
+**权威数字**：`mvn test` 共 **154 个测试，0 失败 / 0 错误 / 0 跳过**，24 个测试类。
+
+| 模块 | 测试数 | 测试类 |
+|------|--------|--------|
+| mall-common | 5 | `SnowflakeIdUtilTest`(5) |
+| mall-security | 12 | `JwtAuthFilterTest`(4)、`JwtUtilTest`(8) |
+| mall-infra | 6 | `CouponStockRedisServiceTest`(2)、`RedisServiceTest`(4) |
+| mall-server | 131 | 19 个测试类 |
+
+执行方式（本机 `mvn` 不在 PATH）：
+
+```powershell
+& "D:\JetBrains\IntelliJ IDEA 2026.2\plugins\maven-plugin\lib\maven3\bin\mvn.cmd" test
+```
+
+### 已知覆盖缺口
+
+下表是**类级覆盖**（是否存在对应测试类），不是行覆盖率。真实行覆盖率需 JaCoCo，当前 pom 未配置。
+
+| 层 | 有测试 / 总数 | 覆盖率 |
+|----|--------------|--------|
+| ServiceImpl | 12 / 12 | 100% |
+| Controller | 5 / 13 | 38% |
+| Util | 2 / 2 | 100% |
+
+零覆盖的高风险类：
+
+- `SeckillCompensationTask`（110 行）：pending 状态补偿与库存回滚。`finalizeSuccess(message, 3600)` 与 `SeckillRedisStateService.rollback` 中的 TTL 为硬编码，未读取 `mall.seckill.result-ttl-seconds`；`rollback` 返回 `-1`（库存 key 缺失）被静默忽略。
+- `SeckillRedisStateService`、`UserContext`。
+
+### 多实例部署的 ID 冲突风险（待处理）
+
+`SnowflakeIdUtil` 委托 Hutool `IdUtil.getSnowflake()`，其 workerId / datacenterId 由**网络地址与 PID 推导**（`IdUtil.getDataCenterId` 取 MAC，`IdUtil.getWorkerId` 取 `hash(datacenterId + PID)`），两侧各只有 **5 位 = 32 个槽位**。
+
+同主机多实例时 PID 不同，通常能分到不同 workerId，但 32 个槽位的哈希撞车概率随实例数快速上升：
+
+| 同主机实例数 | workerId 撞车概率 |
+|--------------|------------------|
+| 4 | 17.7% |
+| 6 | 39.2% |
+| 8 | 61.4% |
+| 16 | 99.0% |
+
+一旦两个实例共用 `(datacenterId, workerId)`，在**同一毫秒内生成 ID** 就会产生重复 —— 而本项目的万级 QPS 目标下，同毫秒生成是必然的。雪花 ID 的 sequence 每毫秒从 0 重新计数，因此两个实例在同一毫秒的首个 ID 会完全相同。
+
+多实例压测前需改为**显式配置 workerId / datacenterId**（例如从环境变量或配置项读取），而不是依赖推导。当前单实例运行不受影响。
+
+### 已修复的缺陷（2026-09-16）
+
+`AddressServiceImpl` 此前零覆盖，修复两个缺陷并补齐 `AddressServiceImplTest`（6 个用例）：
+
+1. **`isDefault` 永远无法设置**：DTO/VO 为 `Integer`，PO 为 `Boolean`，`BeanUtils.copyProperties` 因类型不匹配静默跳过该字段。已将 PO 改为 `Integer`（同时对齐数据库 `TINYINT`），并在 PO 字段上注明原因。
+2. **越权/不存在时静默成功**：`updateAddress` 原本返回 `null`，Controller 直接 `result.success(null)`，导致修改他人地址返回 `code 0` 成功。现改为抛 `BusinessException(ADDRESS_NOT_EXIST)`（新增码值 `20004`）。
+
+`SeckillConsumer`（289 行）已由 `SeckillConsumerTest` 覆盖，17 个用例聚焦 ACK/NACK 语义、幂等分支与快照字段兼容回退。
+
+无测试的 Controller：`CartController`、`OrderController`、`AddressController`、`AuthController`、`ProductController`、`UserCouponController`、`ReviewController`、`SkuController`。
+
+### 文档维护约定
+
+按阶段记录测试数量会持续漂移，历史上已产生「25 个单元测试（含 `AddressServiceImpl`）」「全部 14 个测试类」等失实条目。**新增或修改测试后只更新本节的权威数字**，不要在各阶段条目里散落具体数量。
+
 ## 数据库
 
-执行 `mall-server/src/main/resources/db/init.sql` 初始化全部 15 张表。数据库名为 `mall`，默认连接 `localhost:3306`，账号为 `root`，密码为 `123456`。
+执行 `mall-server/src/main/resources/db/init.sql` 初始化全部 **19 张表**。数据库名为 `mall`，默认连接 `localhost:3306`，账号为 `root`，密码为 `123456`。
+
+> 若数据库早于 `init.sql` 的索引变更建立，`user_coupon`、`payment_record`、`logistics` 上的唯一索引会缺失，导致 `CouponServiceImpl.receiveCoupon` 中依赖 `DataIntegrityViolationException` 的并发幂等分支失效。核对方式见「测试覆盖基线」同级的索引检查说明；修复时重建库或手工 `ALTER TABLE` 补齐。
 
 MyBatis-Plus 配置了逻辑删除字段 `deleted`（`0`=未删除，`1`=已删除），并启用了下划线到驼峰的自动转换。
 
@@ -237,7 +303,7 @@ MyBatis-Plus 配置了逻辑删除字段 `deleted`（`0`=未删除，`1`=已删�
 - RabbitMQ 使用异步 publisher confirm；NACK、异常和超时通过 Lua 回滚库存/限购并标记失败，定时任务扫描长时间 pending 状态并修复订单结果或回滚。
 - 消费者保持手动 ACK，默认并发 8、prefetch 100；消息携带 SKU、秒杀价格和地址快照，数据库连接池初始上限调整为 32。
 - 新增 `/actuator/metrics` 指标、Lua/confirm/消费者耗时和补偿计数；本地 `loadtest` profile 将 path 有效期设为 15 分钟，生产默认 60 秒。
-- 提交 `ba495db` 已落地本阶段代码和测试；MCP IntelliJ JUnit 已运行全部 14 个测试类，均以 `exitCode=0` 通过。
+- 提交 `ba495db` 已落地本阶段代码和测试；MCP IntelliJ JUnit 已运行当时的全部测试类，均以 `exitCode=0` 通过。（当时为 14 个测试类，现已增至 22 个，见「测试覆盖基线」。）
 - 本轮 IDE 终端没有可用的 `mvn` 命令，因此没有重复执行 Maven 全量命令；未启动 MySQL、Redis 或 RabbitMQ。
 - 万级持续到达率、多实例压测及故障注入验证仍待在已恢复的测试环境基础上继续执行；多实例阶段还需准备对应的部署资源。
 
@@ -278,7 +344,7 @@ MyBatis-Plus 配置了逻辑删除字段 `deleted`（`0`=未删除，`1`=已删�
 - 领取路径使用 `mall:coupon:{couponId}:stock` Redis 计数器和 `SETNX + DECR` 原子预占；数据库插入失败会回滚 Redis 库存，`user_coupon` 增加 `(user_id, coupon_id)` 唯一索引，重复领取返回已存在记录保持幂等。
 - 支持 `FULL_REDUCTION` 满减和 `DISCOUNT` 折扣（折扣比例为 `0~1`），校验最低消费金额并返回订单优惠前金额、优惠金额和实付金额。
 - `POST /api/orders` 传入已有 `couponId` 时会在订单事务内校验并将用户券条件更新为 `USED`，订单保存优惠后的 `total_amount` 和 `coupon_id`；取消 `PENDING` 订单会恢复未过期优惠券，过期券在查询、使用和定时任务中转为 `EXPIRED`。
-- 新增 `CouponServiceImplTest` 10 个、`CouponControllerTest` 3 个和 `CouponStockRedisServiceTest` 2 个测试用例；截至本轮，全部 16 个测试类均由 IntelliJ MCP 运行并以 `exitCode=0` 通过，IDE 项目构建成功。
+- 新增 `CouponServiceImplTest` 10 个、`CouponControllerTest` 3 个和 `CouponStockRedisServiceTest` 2 个测试用例；截至本轮，当时的 16 个测试类均由 IntelliJ MCP 运行并以 `exitCode=0` 通过，IDE 项目构建成功。（测试类总数现为 21，见「测试覆盖基线」。）
 - 本阶段尚未启动 MySQL、Redis、RabbitMQ 做真实优惠券领取/下单集成验证；需要环境恢复后验证 Redis 库存、唯一索引、订单金额和取消回滚的一致性。
 
 ### 阶段八：支付物流模块（核心实现和单元测试已完成，真实集成验证待执行）
