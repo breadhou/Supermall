@@ -36,6 +36,14 @@ mvn clean package -DskipTests
 
 应用启动后访问 `http://localhost:8080/doc.html` 查看 Knife4j API 文档。
 
+本机 `mvn` 不在 PATH，IDE 终端同样不可用。可直接调用 IDEA 内置 Maven：
+
+```powershell
+& "D:\JetBrains\IntelliJ IDEA 2026.2\plugins\maven-plugin\lib\maven3\bin\mvn.cmd" test
+```
+
+该内置 Maven 为 3.9.16，运行时使用 `JAVA_HOME` 指向的 `D:\jdks\openjdk-22.0.2`。
+
 ## Maven 模块结构
 
 ```text
@@ -97,6 +105,7 @@ supermall/
 - `mall:seckill:{itemId}:result:{userId}`：秒杀结果（`0`=排队，`1`=成功，`-1`=失败）。
 - `mall:seckill:{itemId}:limit:{userId}`：本用户已预占数量。
 - `mall:seckill:{itemId}:pending:{messageId}` 与 `pending:index`：消息待确认/处理中状态及索引。
+- `mall:coupon:{couponId}:stock`：优惠券领取库存计数，使用 couponId hash tag。
 
 已有 KeyPrefix 实现：`Userkey`、`GoodsKey`、`MiaoshaKey`、`MiaoShaUserKey`、`OrderKey`，位于 `mall-infra/redis/`；秒杀完整 key 由 `SeckillKey` 生成，旧前缀仅为源码兼容保留。
 
@@ -128,8 +137,8 @@ supermall/
 | 阶段四 | 购物车 | cart_item | 已完成 |
 | 阶段五 | 订单模块 | order、order_item、refund | 已完成 |
 | 阶段六 | 秒杀模块 | seckill_activity、seckill_item、seckill_order | 核心实现和集成测试已完成，持续压测待验证 |
-| 阶段七 | 优惠券 | coupon、user_coupon | 待实现 |
-| 阶段八 | 支付物流 | payment_record、logistics | 待实现 |
+| 阶段七 | 优惠券 | coupon、user_coupon | 核心实现和单元测试已完成，真实集成验证待执行 |
+| 阶段八 | 支付物流 | payment_record、logistics | 核心实现和单元测试已完成，真实集成验证待执行 |
 | 阶段九 | 商家后台 | merchant、admin_user | 待实现 |
 
 ## 当前进度
@@ -211,7 +220,8 @@ MyBatis-Plus 配置了逻辑删除字段 `deleted`（`0`=未删除，`1`=已删�
 - JMeter 安装目录：`D:\tools\apache-jmeter-5.6.3`。
 - 压测只使用独立的秒杀活动、商品和用户，不复用集成测试数据；Redis 固定使用 DB1。
 - 压测前先准备高库存活动和带默认收货地址的测试用户，再执行库存预热；不要在每个线程中重复预热库存。
-- 非 GUI 模式执行 JMeter，结果文件放在 `jmeter/` 下的本地输出目录，不提交用户密码、JTL 或 HTML 报告。
+- 非 GUI 模式执行 JMeter，结果文件放在 `jmeter/runs/` 下的本地输出目录，不提交用户密码、JTL 或 HTML 报告。
+- **`jmeter/runs/` 内含真实 JWT 和明文密码**（`token-paths.csv`、`*-users.csv`），已在 `.gitignore` 中整体排除；`jmeter/report/`、`jmeter/results/`、顶层 `jmeter/*.jtl` 同样忽略。禁止用 `git add -f` 强制加入。
 - 当前压测测试计划为 `jmeter/seckill-load-test.jmx`，用户生成脚本为 `jmeter/prepare-users.ps1`，数据脚本为 `jmeter/prepare-seckill-data.sql`。
 - 已完成第一轮 100 线程压测：30 秒升压、60 秒测试窗口，402 个采样全部 HTTP 成功；100 个新用户实际生成 100 条秒杀订单，MySQL 与 Redis 库存均由 978 降至 878，RabbitMQ 主队列和死信队列均无积压。
 - 本轮结果文件：`jmeter/results/formal-100t-20260731152048.jtl`，HTML 报告目录：`jmeter/report/formal-100t-20260731152048/`。
@@ -260,3 +270,24 @@ MyBatis-Plus 配置了逻辑删除字段 `deleted`（`0`=未删除，`1`=已删�
 - 本轮资源采样中 Windows 总内存约 15.21 GB，最低可用约 3.02 GB（约 80.1% 已用），应用 JVM 工作集约 0.38 GB，WSL 可用内存约 6.6 GB；本轮未观察到内存耗尽，但更高流量和多实例测试仍需保留约 3 GB 以上主机余量。
 - 本轮测试通过 WSL 地址 `172.25.212.154` 连接 Redis `6379` 和 RabbitMQ AMQP `5672`，RabbitMQ 管理端 `15672` 与应用 `8081` 可用；WSL Ubuntu 正在运行，但 Windows `docker` 命令不可用。若下次环境已停止，恢复前需重新确认服务端口，并以 `--server.port=8081 --spring.profiles.active=loadtest` 启动应用，同时临时覆盖 Redis/RabbitMQ host。
 - 单机阶段结论：16.7 req/s 可稳定持续 60 秒；约 952 req/s 的短时探针全部成功；将目标提高到 2k/5k 后，JMeter 实际到达率受单机连接接入能力限制在约 1,036/1,263 req/s，并出现连接拒绝。业务成功请求始终保持库存、订单、Redis 和 MQ 一致，未发现超卖、重复订单或消息丢失。单机验证到此结束，10k req/s 的 60 秒云平台/多实例验证留到项目功能完成后。
+
+### 阶段七：优惠券模块（核心实现和单元测试已完成，真实集成验证待执行）
+
+- 新增 `Coupon`、`UserCoupon` PO 和对应 MyBatis-Plus Mapper。
+- 新增优惠券模板查询 `GET /api/coupons`、领取 `POST /api/coupons/{couponId}/receive`，以及用户优惠券列表 `GET /api/user/coupons?status=UNUSED|USED|EXPIRED`。
+- 领取路径使用 `mall:coupon:{couponId}:stock` Redis 计数器和 `SETNX + DECR` 原子预占；数据库插入失败会回滚 Redis 库存，`user_coupon` 增加 `(user_id, coupon_id)` 唯一索引，重复领取返回已存在记录保持幂等。
+- 支持 `FULL_REDUCTION` 满减和 `DISCOUNT` 折扣（折扣比例为 `0~1`），校验最低消费金额并返回订单优惠前金额、优惠金额和实付金额。
+- `POST /api/orders` 传入已有 `couponId` 时会在订单事务内校验并将用户券条件更新为 `USED`，订单保存优惠后的 `total_amount` 和 `coupon_id`；取消 `PENDING` 订单会恢复未过期优惠券，过期券在查询、使用和定时任务中转为 `EXPIRED`。
+- 新增 `CouponServiceImplTest` 10 个、`CouponControllerTest` 3 个和 `CouponStockRedisServiceTest` 2 个测试用例；截至本轮，全部 16 个测试类均由 IntelliJ MCP 运行并以 `exitCode=0` 通过，IDE 项目构建成功。
+- 本阶段尚未启动 MySQL、Redis、RabbitMQ 做真实优惠券领取/下单集成验证；需要环境恢复后验证 Redis 库存、唯一索引、订单金额和取消回滚的一致性。
+
+### 阶段八：支付物流模块（核心实现和单元测试已完成，真实集成验证待执行）
+
+- 新增 `PaymentRecord` PO、Mapper、Service 和 VO；模拟支付接口为 `POST /api/orders/{orderId}/pay`，查询接口为 `GET /api/orders/{orderId}/payment`。
+- 支付只允许当前用户操作自己的 `PENDING` 订单；事务先锁定订单行，再创建或更新 `payment_record`，成功后将订单推进到 `PAID`。
+- 重复支付对已有 `SUCCESS` 记录幂等返回，并在订单仍为 `PENDING` 时修复订单状态；订单归属和非法状态分别返回订单/支付状态错误。
+- 新增 `Logistics` PO、Mapper、Service、DTO 和 VO；用户查询接口为 `GET /api/orders/{orderId}/logistics`。
+- 物流服务层已实现 `PAID → SHIPPED → DELIVERED` 的发货和送达流转、订单归属校验及重复发货/送达保护；由于商家后台尚未完成，发货和送达方法暂不暴露为用户 HTTP 接口，阶段九接入商家权限后再开放。
+- 为支付记录和物流记录增加 `order_id` 唯一索引，避免一单多条支付/物流记录；订单状态新增兼容性的 `DELIVERED`，原有 `SHIPPED → RECEIVED` 确认收货接口仍保留，同时支持 `DELIVERED → RECEIVED`。
+- `ResultStatus` 新增 80000 段支付/物流错误码；新增 `PaymentServiceImplTest` 6 个、`PaymentControllerTest` 2 个、`LogisticsServiceImplTest` 6 个和 `LogisticsControllerTest` 1 个测试用例，均已由 IntelliJ MCP 运行并以 `exitCode=0` 通过，IDE 增量构建成功。
+- 尚未使用恢复的 MySQL 做真实支付、发货、物流查询和订单状态联动验证；环境恢复后需验证唯一索引、事务回滚、重复请求、越权访问和订单/支付/物流最终一致性。

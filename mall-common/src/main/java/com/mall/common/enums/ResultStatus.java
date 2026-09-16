@@ -26,7 +26,23 @@ public enum ResultStatus {
     // ==================== 秒杀模块 60000 ====================
     SECKILL_END(60000, "商品已经秒杀完毕"),
     SECKILL_REPEAT(60001, "不能重复秒杀"),
-    SECKILL_FAIL(60002, "秒杀失败");
+    SECKILL_FAIL(60002, "秒杀失败"),
+
+    // ==================== 优惠券模块 70000 ====================
+    COUPON_NOT_EXIST(70000, "优惠券不存在"),
+    COUPON_EXPIRED(70001, "优惠券已过期"),
+    COUPON_STOCK_EMPTY(70002, "优惠券已领完"),
+    COUPON_ALREADY_RECEIVED(70003, "优惠券已经领取"),
+    COUPON_NOT_OWNED(70004, "未拥有该优惠券"),
+    COUPON_ALREADY_USED(70005, "优惠券已经使用"),
+    COUPON_NOT_APPLICABLE(70006, "优惠券不满足使用条件"),
+    COUPON_STATUS_ERROR(70007, "优惠券状态不允许此操作"),
+
+    // ==================== 支付物流模块 80000 ====================
+    PAYMENT_NOT_EXIST(80000, "支付记录不存在"),
+    PAYMENT_STATUS_ERROR(80001, "支付状态不允许此操作"),
+    LOGISTICS_NOT_EXIST(80002, "物流记录不存在"),
+    LOGISTICS_STATUS_ERROR(80003, "物流状态不允许此操作");
 
     private final int code;
     private final String message;

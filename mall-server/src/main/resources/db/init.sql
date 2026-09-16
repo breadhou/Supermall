@@ -113,7 +113,7 @@ CREATE TABLE `order` (
     address_id   BIGINT        NOT NULL COMMENT '收货地址快照ID',
     total_amount DECIMAL(10,2) NOT NULL COMMENT '实付金额',
     coupon_id    BIGINT        DEFAULT NULL COMMENT '使用的优惠券ID，可空',
-    status       VARCHAR(16)   NOT NULL DEFAULT 'PENDING' COMMENT 'PENDING/PAID/SHIPPED/RECEIVED/REFUNDED/CANCELLED',
+    status       VARCHAR(16)   NOT NULL DEFAULT 'PENDING' COMMENT 'PENDING/PAID/SHIPPED/DELIVERED/RECEIVED/REFUNDED/CANCELLED',
     created_at   DATETIME      NOT NULL DEFAULT CURRENT_TIMESTAMP,
     PRIMARY KEY (id),
     UNIQUE KEY uk_order_no (order_no),
@@ -205,7 +205,8 @@ CREATE TABLE user_coupon (
     created_at DATETIME   NOT NULL DEFAULT CURRENT_TIMESTAMP,
     PRIMARY KEY (id),
     KEY idx_user_id (user_id),
-    KEY idx_coupon_id (coupon_id)
+    KEY idx_coupon_id (coupon_id),
+    UNIQUE KEY uk_user_coupon (user_id, coupon_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='用户优惠券';
 
 -- =============================================
@@ -240,7 +241,7 @@ CREATE TABLE payment_record (
     paid_at  DATETIME      DEFAULT NULL COMMENT '支付完成时间',
     created_at DATETIME    NOT NULL DEFAULT CURRENT_TIMESTAMP,
     PRIMARY KEY (id),
-    KEY idx_order_id (order_id)
+    UNIQUE KEY uk_payment_order_id (order_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='支付记录';
 
 CREATE TABLE logistics (
@@ -251,5 +252,5 @@ CREATE TABLE logistics (
     status       VARCHAR(16) NOT NULL DEFAULT 'PENDING' COMMENT 'PENDING/SHIPPED/DELIVERED',
     created_at   DATETIME    NOT NULL DEFAULT CURRENT_TIMESTAMP,
     PRIMARY KEY (id),
-    KEY idx_order_id (order_id)
+    UNIQUE KEY uk_logistics_order_id (order_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='物流信息';

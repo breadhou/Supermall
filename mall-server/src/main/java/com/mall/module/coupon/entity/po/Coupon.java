@@ -1,4 +1,4 @@
-package com.mall.module.order.entity.po;
+package com.mall.module.coupon.entity.po;
 
 import com.baomidou.mybatisplus.annotation.IdType;
 import com.baomidou.mybatisplus.annotation.TableId;
@@ -10,19 +10,19 @@ import java.math.BigDecimal;
 import java.time.LocalDateTime;
 
 @Data
-@TableName("`order`")
+@TableName("coupon")
 @Accessors(chain = true)
-public class Order {
+public class Coupon {
 
     @TableId(type = IdType.ASSIGN_ID)
     private Long id;
-    private String orderNo;
-    private Long userId;
-    private Long addressId;
-    private BigDecimal totalAmount;
-    private Long couponId;
-    /** PENDING/PAID/SHIPPED/DELIVERED/RECEIVED/REFUNDED/CANCELLED. */
-    private String status;
+    private String name;
+    /** FULL_REDUCTION or DISCOUNT. */
+    private String type;
+    /** Reduction amount for FULL_REDUCTION, discount factor (0~1) for DISCOUNT. */
+    private BigDecimal discount;
+    private BigDecimal minAmount;
+    private Integer total;
+    private Integer expireDay;
     private LocalDateTime createdAt;
-
 }

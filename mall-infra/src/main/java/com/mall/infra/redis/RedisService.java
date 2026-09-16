@@ -141,6 +141,21 @@ public class RedisService {
         return stringRedisTemplate.opsForValue().decrement(realKey);
     }
 
+    /** Counter operation when the caller already owns the complete key. */
+    public Long decr(String key) {
+        return stringRedisTemplate.opsForValue().decrement(key);
+    }
+
+    /** Counter operation when the caller already owns the complete key. */
+    public Long incr(String key) {
+        return stringRedisTemplate.opsForValue().increment(key);
+    }
+
+    /** Counter operation when the caller already owns the complete key. */
+    public Long incr(String key, long delta) {
+        return stringRedisTemplate.opsForValue().increment(key, delta);
+    }
+
     // ---- expire ----
 
     public Boolean expire(KeyPrefix prefix, String key, long timeout, TimeUnit unit) {
@@ -152,5 +167,13 @@ public class RedisService {
 
     public Boolean setIfAbsent(String key, String value, long timeout, TimeUnit unit) {
         return stringRedisTemplate.opsForValue().setIfAbsent(key, value, timeout, unit);
+    }
+
+    /**
+     * SETNX without an expiry.  This is useful for counters whose lifecycle
+     * is the same as the business object, such as a coupon stock snapshot.
+     */
+    public Boolean setIfAbsent(String key, String value) {
+        return stringRedisTemplate.opsForValue().setIfAbsent(key, value);
     }
 }

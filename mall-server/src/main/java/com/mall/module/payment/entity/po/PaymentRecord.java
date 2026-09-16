@@ -1,4 +1,4 @@
-package com.mall.module.order.entity.po;
+package com.mall.module.payment.entity.po;
 
 import com.baomidou.mybatisplus.annotation.IdType;
 import com.baomidou.mybatisplus.annotation.TableId;
@@ -10,19 +10,17 @@ import java.math.BigDecimal;
 import java.time.LocalDateTime;
 
 @Data
-@TableName("`order`")
+@TableName("payment_record")
 @Accessors(chain = true)
-public class Order {
+public class PaymentRecord {
 
     @TableId(type = IdType.ASSIGN_ID)
     private Long id;
-    private String orderNo;
-    private Long userId;
-    private Long addressId;
-    private BigDecimal totalAmount;
-    private Long couponId;
-    /** PENDING/PAID/SHIPPED/DELIVERED/RECEIVED/REFUNDED/CANCELLED. */
+    private Long orderId;
+    private BigDecimal amount;
+    private String method;
     private String status;
+    private LocalDateTime paidAt;
     private LocalDateTime createdAt;
 
 }

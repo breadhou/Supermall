@@ -9,6 +9,7 @@ target/
 .idea/jarRepositories.xml
 .idea/compiler.xml
 .idea/libraries/
+.idea/markdown.xml
 *.iws
 *.iml
 *.ipr
@@ -46,3 +47,6 @@ jmeter/*.jtl
 jmeter/*.log
 jmeter/report/
 jmeter/results/
+# jmeter/runs/ 含真实 JWT（token-paths.csv）和明文密码（*-users.csv），整体排除
+jmeter/runs/
+/jmeter.log

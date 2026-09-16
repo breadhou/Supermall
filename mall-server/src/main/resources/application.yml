@@ -67,6 +67,8 @@ springdoc:
     path: /v3/api-docs
 
 mall:
+  coupon:
+    expiration-fixed-delay-ms: 60000
   seckill:
     path-ttl-seconds: 60
     result-ttl-seconds: 3600

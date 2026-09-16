@@ -5,6 +5,8 @@ import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.mall.common.enums.ResultStatus;
 import com.mall.common.exception.BusinessException;
 import com.mall.common.utils.SnowflakeIdUtil;
+import com.mall.module.coupon.entity.vo.CouponApplyResult;
+import com.mall.module.coupon.service.CouponService;
 import com.mall.module.order.entity.dto.CreateOrderDTO;
 import com.mall.module.order.entity.dto.OrderPageDTO;
 import com.mall.module.order.entity.dto.RefundDTO;
@@ -52,6 +54,9 @@ public class OrderServiceImpl implements OrderService {
     @Autowired
     ProductSkuMapper skuMapper;
 
+    @Autowired
+    CouponService couponService;
+
     @Override
     @Transactional
     public OrderVO createOrder(CreateOrderDTO dto) {
@@ -95,6 +100,11 @@ public class OrderServiceImpl implements OrderService {
             voList.add(itemVO);
 
             totalAmount = totalAmount.add(sku.getPrice().multiply(BigDecimal.valueOf(quantity)));
+        }
+
+        if (dto.getCouponId() != null) {
+            CouponApplyResult couponResult = couponService.useCoupon(dto.getCouponId(), totalAmount);
+            totalAmount = couponResult.getFinalAmount();
         }
 
         Order order = new Order()
@@ -207,6 +217,7 @@ public class OrderServiceImpl implements OrderService {
     }
 
     @Override
+    @Transactional
     public void cancelOrder(Long orderId) {
 
         Long userId = UserContext.getUserId();
@@ -222,6 +233,10 @@ public class OrderServiceImpl implements OrderService {
         order.setStatus("CANCELLED");
         orderMapper.updateById(order);
 
+        if (order.getCouponId() != null && couponService != null) {
+            couponService.restoreCoupon(order.getCouponId());
+        }
+
     }
 
     @Override
@@ -233,7 +248,10 @@ public class OrderServiceImpl implements OrderService {
             throw new BusinessException(ResultStatus.ORDER_NOT_EXIST);
         }
 
-        if (!order.getStatus().equals("SHIPPED")) {
+        // Keep the original SHIPPED -> RECEIVED transition for compatibility.
+        // When the logistics provider reports delivery, the order first moves
+        // through DELIVERED and the user can still confirm receipt afterwards.
+        if (!order.getStatus().equals("SHIPPED") && !order.getStatus().equals("DELIVERED")) {
             throw new BusinessException(ResultStatus.ORDER_STATUS_ERROR);
         }
 
@@ -251,7 +269,9 @@ public class OrderServiceImpl implements OrderService {
             throw new BusinessException(ResultStatus.ORDER_NOT_EXIST);
         }
 
-        if (!order.getStatus().equals("PAID") && !order.getStatus().equals("RECEIVED")) {
+        if (!order.getStatus().equals("PAID")
+                && !order.getStatus().equals("DELIVERED")
+                && !order.getStatus().equals("RECEIVED")) {
             throw new BusinessException(ResultStatus.ORDER_STATUS_ERROR);
         }
 

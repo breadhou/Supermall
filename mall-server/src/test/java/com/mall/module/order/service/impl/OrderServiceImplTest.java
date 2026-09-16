@@ -5,6 +5,8 @@ import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.mall.common.enums.ResultStatus;
 import com.mall.common.exception.BusinessException;
 import com.mall.common.utils.SnowflakeIdUtil;
+import com.mall.module.coupon.entity.vo.CouponApplyResult;
+import com.mall.module.coupon.service.CouponService;
 import com.mall.module.order.entity.dto.CreateOrderDTO;
 import com.mall.module.order.entity.dto.OrderPageDTO;
 import com.mall.module.order.entity.dto.RefundDTO;
@@ -52,6 +54,9 @@ class OrderServiceImplTest {
 
     @Mock
     private ProductSkuMapper skuMapper;
+
+    @Mock
+    private CouponService couponService;
 
     @InjectMocks
     private OrderServiceImpl orderService;
@@ -132,6 +137,26 @@ class OrderServiceImplTest {
 
         verify(orderMapper).insert(any(Order.class));
         verify(orderItemMapper).insert(any(OrderItem.class));
+    }
+
+    @Test
+    void createOrder_shouldUseCouponAndPersistDiscountedAmount() {
+        Long couponId = 7001L;
+        createOrderDTO.setCouponId(couponId);
+        when(addressMapper.selectById(ADDRESS_ID)).thenReturn(mockAddress);
+        when(skuMapper.selectById(SKU_ID)).thenReturn(mockSku);
+        when(couponService.useCoupon(couponId, new BigDecimal("5998.00")))
+                .thenReturn(new CouponApplyResult(
+                        new BigDecimal("5998.00"),
+                        new BigDecimal("10.00"),
+                        new BigDecimal("5988.00")
+                ));
+
+        var result = orderService.createOrder(createOrderDTO);
+
+        assertEquals(new BigDecimal("5988.00"), result.getTotalAmount());
+        assertEquals(couponId, result.getCouponId());
+        verify(couponService).useCoupon(couponId, new BigDecimal("5998.00"));
     }
 
     @Test
@@ -278,6 +303,18 @@ class OrderServiceImplTest {
         assertDoesNotThrow(() -> orderService.cancelOrder(ORDER_ID));
 
         assertEquals("CANCELLED", mockOrder.getStatus());
+        verify(orderMapper).updateById(mockOrder);
+    }
+
+    @Test
+    void cancelOrder_shouldRestoreCoupon_whenOrderUsedCoupon() {
+        Long couponId = 7001L;
+        mockOrder.setCouponId(couponId);
+        when(orderMapper.selectById(ORDER_ID)).thenReturn(mockOrder);
+
+        orderService.cancelOrder(ORDER_ID);
+
+        verify(couponService).restoreCoupon(couponId);
         verify(orderMapper).updateById(mockOrder);
     }
 

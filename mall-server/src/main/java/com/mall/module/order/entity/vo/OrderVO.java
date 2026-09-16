@@ -14,6 +14,7 @@ public class OrderVO {
     private Long userId;
     private Long addressId;
     private BigDecimal totalAmount;
+    private Long couponId;
     private String status;
     private LocalDateTime createdAt;
     private List<OrderItemVO> items;
