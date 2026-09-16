@@ -18,6 +18,7 @@ public enum ResultStatus {
     USER_NOT_EXIST(20001, "用户不存在"),
     PASSWORD_ERROR(20002, "密码错误"),
     MOBILE_ERROR(20003, "手机号已存在"),
+    ADDRESS_NOT_EXIST(20004, "地址不存在"),
 
     // ==================== 订单模块 50000 ====================
     ORDER_NOT_EXIST(50000, "订单不存在"),

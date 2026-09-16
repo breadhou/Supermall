@@ -1,6 +1,8 @@
 package com.mall.module.user.service.impl;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.mall.common.enums.ResultStatus;
+import com.mall.common.exception.BusinessException;
 import com.mall.common.utils.SnowflakeIdUtil;
 import com.mall.infra.redis.RedisService;
 import com.mall.module.user.entity.dto.AddressDTO;
@@ -73,7 +75,10 @@ public class AddressServiceImpl implements AddressService {
                         .eq(Address::getUserId, userId)
         );
         if (addr == null) {
-            return null;
+            // 查询按 user_id 限定，因此 null 表示「地址不存在」或「不属于当前用户」。
+            // 抛异常而不是返回 null，否则 Controller 会把 vo=null 当成成功返回
+            // code 0，客户端无法区分修改成功与越权失败。
+            throw new BusinessException(ResultStatus.ADDRESS_NOT_EXIST);
         }
 
         // 如果设为默认，先取消旧默认
@@ -107,7 +112,7 @@ public class AddressServiceImpl implements AddressService {
         wrapper.eq(Address::getIsDefault, 1);
         List<Address> defaults = addressMapper.selectList(wrapper);
         for (Address a : defaults) {
-            a.setIsDefault(false);
+            a.setIsDefault(0);
             addressMapper.updateById(a);
         }
     }
