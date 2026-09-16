@@ -44,6 +44,47 @@ mvn clean package -DskipTests
 
 该内置 Maven 为 3.9.16，运行时使用 `JAVA_HOME` 指向的 `D:\jdks\openjdk-22.0.2`。
 
+## 本地测试环境启动
+
+三个组件分属两套机制，重启机器后需分别启动：
+
+| 组件 | 运行方式 | 启动命令 |
+|------|---------|---------|
+| MySQL 8.0 | **Windows 原生服务** `MySQL80` | `Start-Service MySQL80` |
+| Redis 7 | **WSL Docker 容器** `redis`（`redis:7-alpine`） | `wsl -d Ubuntu -- docker start redis` |
+| RabbitMQ 3 | **WSL Docker 容器** `rabbitmq`（`rabbitmq:3-management-alpine`） | `wsl -d Ubuntu -- docker start rabbitmq` |
+
+要点：
+
+- **MySQL 需要管理员权限**。非提权会话执行 `Start-Service MySQL80` 会报 `Cannot open 'MySQL80' service on computer '.'`，需用提权终端或 UAC 触发。
+- **两个容器的重启策略都是 `no`**，不会随 WSL 自动拉起，每次都要手动 `docker start`。
+- **WSL 会在最后一条 `wsl.exe` 命令结束约 60 秒后关闭整个 VM**，容器随之收到 SIGTERM。测试期间必须保持一个 WSL 会话存活（后台窗口或长驻进程），否则环境会中途掉。已复现多次；现象是容器 `Exited (0)`、日志出现 `Received SIGTERM`。
+- 端口从 Windows 侧用 **`localhost`** 直连即可（WSL2 转发可用）：3306 / 6379 / 5672 / 15672。**不要依赖 WSL IP**，每次重启都会变（见过 `172.25.212.154` 和 `172.25.208.1`）。
+- WSL 侧只有 Redis + RabbitMQ，实测占用约 190 MB；资源上限配置在 `C:\Users\<user>\.wslconfig`（`memory=4GB`、`swap=2GB`、`autoMemoryReclaim=gradual`）。注意 `autoMemoryReclaim` 必须放在 **`[experimental]`** 段，写在 `[wsl2]` 下会被拒绝并提示「未知键」。
+
+应用启动：
+
+```bash
+java -jar mall-server/target/mall-server-1.0.0.jar --server.port=8081 --spring.profiles.active=loadtest
+```
+
+`loadtest` profile 仅覆盖 `mall.seckill.path-ttl-seconds=900`，其余继承主配置。启动约需 6 秒，日志出现 `Started MallApplication` 即为就绪。
+
+### 验证用测试数据（2026-09-16 建立）
+
+数据库重建后写入的最小数据集，供优惠券/支付集成验证使用：
+
+| 对象 | ID | 说明 |
+|------|----|------|
+| 用户 A | `2100109502413639680` | 用户名 `coupontest_a` |
+| 用户 B | `2100109503449632768` | 用户名 `coupontest_b` |
+| 商品 SKU | `930000000000000001` / `930000000000000002` | 199.99 / 299.99 |
+| 券 | `940000000000000001`~`...004` | 满减20 / 8折 / 并发券(total=2) / 过期券(expire_day=1) |
+
+按本文件既有约定，**测试账号密码不写入项目文档**；本地口令请自行记录。
+
+注意：应用接收 JSON 时中文必须是 **UTF-8**。从 Git Bash 直接用 `curl -d '{"receiver":"中文"}'` 会以 GBK 发出，服务端报 `Invalid UTF-8 start byte`；应改写为 UTF-8 文件后用 `--data-binary @file`。另注意 `AddressDTO.isDefault` 等字段为 `Integer`，传 `1` 而非 `true`。
+
 ## Maven 模块结构
 
 ```text
@@ -238,7 +279,10 @@ supermall/
 
 零覆盖的高风险类：
 
-- `SeckillCompensationTask`（110 行）：pending 状态补偿与库存回滚。`finalizeSuccess(message, 3600)` 与 `SeckillRedisStateService.rollback` 中的 TTL 为硬编码，未读取 `mall.seckill.result-ttl-seconds`；`rollback` 返回 `-1`（库存 key 缺失）被静默忽略。
+- `SeckillCompensationTask`（110 行）：pending 状态补偿与库存回滚。已读代码，逻辑正确（PROCESSING 的 `processingAt` 由 `seckill_claim.lua` 保证非空，此前怀疑的「永久跳过」不成立）。待办三项：
+  1. **补测试**，重点锁住 `repairOne` 中「**先查 `seckill_order` 再决定回滚**」的顺序 —— 这是防止「消费者卡顿超时被回滚、随后又提交订单」产生数据不一致的关键。
+  2. **修硬编码 TTL**：`SeckillCompensationTask:85` 与 `SeckillRedisStateService:115` 都写死 `3600`，绕过了 `mall.seckill.result-ttl-seconds`。消费端 `SeckillConsumer:110` 读的是配置，两条路径会静默分叉。
+  3. **`rollback` 返回 `-1`（库存 key 缺失）被静默吞掉**，无日志无 metric，该故障模式在监控上不可见。
 - `SeckillRedisStateService`、`UserContext`。
 
 ### 多实例部署的 ID 冲突风险（待处理）
