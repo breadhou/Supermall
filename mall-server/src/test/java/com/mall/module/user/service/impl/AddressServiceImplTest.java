@@ -8,7 +8,9 @@ import com.mall.module.user.entity.po.Address;
 import com.mall.module.user.entity.vo.AddressVO;
 import com.mall.module.user.mapper.AddressMapper;
 import com.mall.security.utils.UserContext;
+import com.mall.common.utils.SnowflakeIdUtil;
 import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -46,6 +48,15 @@ class AddressServiceImplTest {
 
     @InjectMocks
     private AddressServiceImpl addressService;
+
+    /**
+     * 雪花 ID 现在是 fail-closed 的：未注入实例身份就不发号。
+     * 本类不关心具体取值，只需要「已配置」这个前提；同一组值重复配置是幂等的。
+     */
+    @BeforeAll
+    static void configureSnowflakeIds() {
+        SnowflakeIdUtil.configure(0L, 0L);
+    }
 
     @BeforeEach
     void setUp() {

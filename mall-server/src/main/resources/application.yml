@@ -67,6 +67,13 @@ springdoc:
     path: /v3/api-docs
 
 mall:
+  id:
+    # 雪花 ID 的实例身份，必须由环境变量注入；刻意不给默认值，缺失时启动即失败。
+    # 多实例部署时每个实例必须拿到互不相同的一对值（合法范围各 0~31）。
+    # 不要退回「按 MAC + PID 推导」——同主机 8 实例时 workerId 撞车概率 61.4%，
+    # 撞车后同一毫秒会产出逐位相同的 ID。
+    worker-id: ${MALL_WORKER_ID}
+    datacenter-id: ${MALL_DATACENTER_ID}
   coupon:
     expiration-fixed-delay-ms: 60000
   merchant:

@@ -65,12 +65,17 @@ mvn clean package -DskipTests
 应用启动：
 
 ```bash
-# 商家端 JWT 密钥必须由环境变量注入（无默认值，缺失则启动失败）
+# 三个环境变量都是必需的：缺失任何一个都启动失败
 export MERCHANT_JWT_SECRET='<至少 32 字节的随机串>'
+export MALL_WORKER_ID=1          # 0~31，每个实例必须互不相同
+export MALL_DATACENTER_ID=1      # 0~31
 java -jar mall-server/target/mall-server-1.0.0.jar --server.port=8081 --spring.profiles.active=loadtest
 ```
 
-`MERCHANT_JWT_SECRET` 自阶段九 9.1 起为**必需**：`mall.merchant.jwt-secret` 刻意不设默认值，缺失时应用会在启动阶段抛 `Could not resolve placeholder 'MERCHANT_JWT_SECRET'` 并退出。这是有意的 fail-closed——商家端与 C 端密钥不同，隔离才在签名层面成立。
+三者都**刻意不设默认值**，缺失时启动阶段即抛 `Could not resolve placeholder '...'` 并退出：
+
+- `MERCHANT_JWT_SECRET`（阶段九 9.1 起）——商家端与 C 端密钥不同，隔离才在签名层面成立。
+- `MALL_WORKER_ID` / `MALL_DATACENTER_ID`（2026-09-18 起）——雪花 ID 的实例身份。此前由 Hutool 按 MAC + PID 推导，**单实例下没问题，只有多实例高 QPS 时才会静默发出重复 ID**，那种故障极难回溯，所以宁可起不来。多实例部署时每个实例给一对不同的值。
 
 `loadtest` profile 仅覆盖 `mall.seckill.path-ttl-seconds=900`，其余继承主配置。启动约需 6 秒，日志出现 `Started MallApplication` 即为就绪。
 
@@ -273,7 +278,7 @@ supermall/
 
 ## 测试覆盖基线（2026-09-18 核实）
 
-**权威数字**：`mvn test` 共 **183 个测试，0 失败 / 0 错误 / 0 跳过**，33 个测试类。
+**权威数字**：`mvn test` 共 **188 个测试，0 失败 / 0 错误 / 0 跳过**，33 个测试类。
 
 | 模块 | 测试数 | 测试类 |
 |------|--------|--------|
@@ -306,11 +311,11 @@ supermall/
 - 同文件另锁住：无订单时才回滚、`PROCESSING` 未超时不动作、`finalizeSuccess` 用的是注入的 TTL 而非字面量、`rollback == -1` 必须记 `rollback_stock_missing` 指标。
 - `SeckillRedisStateServiceTest`（2 个用例）用打桩捕获 Lua 的 ARGV，锁住 TTL 确实被转发进脚本。
 
-### 多实例部署的 ID 冲突风险（待处理）
+### 多实例部署的 ID 冲突（已修复，2026-09-18）
 
-`SnowflakeIdUtil` 委托 Hutool `IdUtil.getSnowflake()`，其 workerId / datacenterId 由**网络地址与 PID 推导**（`IdUtil.getDataCenterId` 取 MAC，`IdUtil.getWorkerId` 取 `hash(datacenterId + PID)`），两侧各只有 **5 位 = 32 个槽位**。
+`SnowflakeIdUtil` 原先委托 Hutool `IdUtil.getSnowflake()` 自动推导：`datacenterId` 取 **MAC 地址最后两个字节**，`workerId` 取 `hash(datacenterId + PID)` 的低 16 位，两侧各只有 **5 位 = 32 个槽位**。
 
-同主机多实例时 PID 不同，通常能分到不同 workerId，但 32 个槽位的哈希撞车概率随实例数快速上升：
+同主机多实例时 MAC 相同 → `datacenterId` 恒定，`workerId` 退化成「PID 哈希进 32 个桶」，是标准生日问题：
 
 | 同主机实例数 | workerId 撞车概率 |
 |--------------|------------------|
@@ -319,9 +324,17 @@ supermall/
 | 8 | 61.4% |
 | 16 | 99.0% |
 
-一旦两个实例共用 `(datacenterId, workerId)`，在**同一毫秒内生成 ID** 就会产生重复 —— 而本项目的万级 QPS 目标下，同毫秒生成是必然的。雪花 ID 的 sequence 每毫秒从 0 重新计数，因此两个实例在同一毫秒的首个 ID 会完全相同。
+**撞了为什么会产出完全相同的 ID**：Hutool `Snowflake` 的 `randomSequenceLimit` 默认是 `0`（逐层追构造器确认），因此每到新的一毫秒序列号从 **0** 开始。两个共用 `(datacenterId, workerId)` 的实例在同一毫秒各自返回 `(timestamp << 22) | (dc << 17) | (worker << 12) | 0`——四个分量全同，**逐位相同**。序列号只是每实例内存里的一个 long，实例之间没有协调。
 
-多实例压测前需改为**显式配置 workerId / datacenterId**（例如从环境变量或配置项读取），而不是依赖推导。当前单实例运行不受影响。
+**危险之处在于它是静默的**：低负载时两者难在同一毫秒发号，几乎不触发；**恰恰是压到高 QPS 才暴露**，表现为零星主键冲突，极难回溯。
+
+**修法**：`SnowflakeIdUtil.configure(workerId, datacenterId)` 由 `SnowflakeIdConfig` 启动时注入，取值来自环境变量 `MALL_WORKER_ID` / `MALL_DATACENTER_ID`，**无默认值**。
+
+- 缺失时启动即失败（`Could not resolve placeholder 'MALL_WORKER_ID'`），与 `MERCHANT_JWT_SECRET` 同样的 fail-closed。
+- 未配置时 `nextId()` 抛 `IllegalStateException`；**以不同值重复配置也抛错**——那会新建生成器、序列号从头开始，可能重复发号。
+- 多实例部署时每个实例必须拿到互不相同的一对值（各 0~31）；同主机多实例时 datacenterId 相同、workerId 不同即可。
+
+**验证**：启动日志打印 `Snowflake identity configured: workerId=1, datacenterId=1`；生成的 ID 反解 `(id>>12)&31` 与 `(id>>17)&31` 均等于配置值，读路径（注册用户）与写路径（下单落库）都核对过。
 
 ### 已修复的缺陷（2026-09-16）
 

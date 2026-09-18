@@ -15,6 +15,8 @@ import com.mall.module.seckill.redis.SeckillRedisStateService;
 import com.mall.module.user.entity.po.Address;
 import com.mall.module.user.mapper.AddressMapper;
 import com.rabbitmq.client.Channel;
+import com.mall.common.utils.SnowflakeIdUtil;
+import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
@@ -48,6 +50,15 @@ import static org.mockito.Mockito.when;
 class SeckillConsumerTest {
 
     private static final long DELIVERY_TAG = 1L;
+
+    /**
+     * 雪花 ID 现在是 fail-closed 的：未注入实例身份就不发号。
+     * 本类不关心具体取值，只需要「已配置」这个前提；同一组值重复配置是幂等的。
+     */
+    @BeforeAll
+    static void configureSnowflakeIds() {
+        SnowflakeIdUtil.configure(0L, 0L);
+    }
 
     @Mock
     private SeckillItemMapper seckillItemMapper;
