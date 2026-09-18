@@ -49,6 +49,22 @@ public class LogisticsServiceImpl implements LogisticsService {
     public LogisticsVO shipOrder(Long orderId, ShipOrderDTO dto) {
         Order order = orderMapper.selectByIdForUpdate(orderId);
         verifyOwnership(order);
+        return ship(order, dto);
+    }
+
+    @Override
+    @Transactional
+    public LogisticsVO shipOrderForMerchant(Long orderId, ShipOrderDTO dto) {
+        Order order = orderMapper.selectByIdForUpdate(orderId);
+        if (order == null) {
+            throw new BusinessException(ResultStatus.ORDER_NOT_EXIST);
+        }
+        return ship(order, dto);
+    }
+
+    /** 状态流转本体，归属校验由各入口自行负责。 */
+    private LogisticsVO ship(Order order, ShipOrderDTO dto) {
+        Long orderId = order.getId();
         if (!PAID.equals(order.getStatus())) {
             throw new BusinessException(ResultStatus.LOGISTICS_STATUS_ERROR);
         }
@@ -81,6 +97,22 @@ public class LogisticsServiceImpl implements LogisticsService {
     public LogisticsVO markDelivered(Long orderId) {
         Order order = orderMapper.selectByIdForUpdate(orderId);
         verifyOwnership(order);
+        return deliver(order);
+    }
+
+    @Override
+    @Transactional
+    public LogisticsVO markDeliveredForMerchant(Long orderId) {
+        Order order = orderMapper.selectByIdForUpdate(orderId);
+        if (order == null) {
+            throw new BusinessException(ResultStatus.ORDER_NOT_EXIST);
+        }
+        return deliver(order);
+    }
+
+    /** 状态流转本体，归属校验由各入口自行负责。 */
+    private LogisticsVO deliver(Order order) {
+        Long orderId = order.getId();
         if (!SHIPPED.equals(order.getStatus())) {
             throw new BusinessException(ResultStatus.LOGISTICS_STATUS_ERROR);
         }

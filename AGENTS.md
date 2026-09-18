@@ -65,8 +65,12 @@ mvn clean package -DskipTests
 应用启动：
 
 ```bash
+# 商家端 JWT 密钥必须由环境变量注入（无默认值，缺失则启动失败）
+export MERCHANT_JWT_SECRET='<至少 32 字节的随机串>'
 java -jar mall-server/target/mall-server-1.0.0.jar --server.port=8081 --spring.profiles.active=loadtest
 ```
+
+`MERCHANT_JWT_SECRET` 自阶段九 9.1 起为**必需**：`mall.merchant.jwt-secret` 刻意不设默认值，缺失时应用会在启动阶段抛 `Could not resolve placeholder 'MERCHANT_JWT_SECRET'` 并退出。这是有意的 fail-closed——商家端与 C 端密钥不同，隔离才在签名层面成立。
 
 `loadtest` profile 仅覆盖 `mall.seckill.path-ttl-seconds=900`，其余继承主配置。启动约需 6 秒，日志出现 `Started MallApplication` 即为就绪。
 
@@ -107,6 +111,8 @@ supermall/
 ├── pom.xml                  # 父 POM：Spring Boot 3.4.4 parent + 版本/模块管理
 ├── mall-common/             # 公共模块：Result<T>、BusinessException、ResultStatus、雪花 ID
 ├── mall-security/           # 安全模块：JWT 生成/校验、Spring Security 无状态配置、UserContext
+│                            #   另有商家端独立一套：MerchantJwtUtil、MerchantContext、
+│                            #   MerchantAuthFilter、MerchantSecurityConfig（@Order(1)）
 ├── mall-infra/              # 基础设施：Redis、分布式锁、KeyPrefix 体系、RabbitMQ 队列声明
 └── mall-server/             # 主服务：启动类 + 所有业务模块（按 module/<domain> 分包）
     └── src/main/
@@ -195,7 +201,7 @@ supermall/
 | 阶段六 | 秒杀模块 | seckill_activity、seckill_item、seckill_order | 核心实现和集成测试已完成，持续压测待验证 |
 | 阶段七 | 优惠券 | coupon、user_coupon | 已完成，真实集成验证 2026-09-18 通过 |
 | 阶段八 | 支付物流 | payment_record、logistics | 已完成，真实集成验证 2026-09-18 通过（发货/送达无 HTTP 出口，待阶段九） |
-| 阶段九 | 商家后台 | merchant、admin_user | 待实现 |
+| 阶段九 | 商家后台 | merchant、admin_user | 9.1 商家端已完成并端到端验证；9.2 管理后台待实现 |
 
 ## 当前进度
 
@@ -267,14 +273,14 @@ supermall/
 
 ## 测试覆盖基线（2026-09-18 核实）
 
-**权威数字**：`mvn test` 共 **162 个测试，0 失败 / 0 错误 / 0 跳过**，27 个测试类。
+**权威数字**：`mvn test` 共 **178 个测试，0 失败 / 0 错误 / 0 跳过**，31 个测试类。
 
 | 模块 | 测试数 | 测试类 |
 |------|--------|--------|
 | mall-common | 5 | `SnowflakeIdUtilTest`(5) |
-| mall-security | 12 | `JwtAuthFilterTest`(4)、`JwtUtilTest`(8) |
+| mall-security | 16 | `JwtAuthFilterTest`(4)、`JwtUtilTest`(8)、`MerchantJwtUtilTest`(4) |
 | mall-infra | 6 | `CouponStockRedisServiceTest`(2)、`RedisServiceTest`(4) |
-| mall-server | 139 | 22 个测试类 |
+| mall-server | 151 | 26 个测试类 |
 
 执行方式（本机 `mvn` 不在 PATH）：
 
@@ -454,4 +460,21 @@ MyBatis-Plus 配置了逻辑删除字段 `deleted`（`0`=未删除，`1`=已删�
 - 为支付记录和物流记录增加 `order_id` 唯一索引，避免一单多条支付/物流记录；订单状态新增兼容性的 `DELIVERED`，原有 `SHIPPED → RECEIVED` 确认收货接口仍保留，同时支持 `DELIVERED → RECEIVED`。
 - `ResultStatus` 新增 80000 段支付/物流错误码；新增 `PaymentServiceImplTest` 6 个、`PaymentControllerTest` 2 个、`LogisticsServiceImplTest` 6 个和 `LogisticsControllerTest` 1 个测试用例，均已由 IntelliJ MCP 运行并以 `exitCode=0` 通过，IDE 增量构建成功。
 - 2026-09-18 已完成真实集成验证：支付 `PENDING` 订单生成 `payment_record` 并使订单转 `PAID`；重复支付返回同一记录且 `payment_record` 仍为 1 行；他人代付、他人查询支付与物流均返回 `50000 ORDER_NOT_EXIST`（越权与不存在同响应，不泄漏订单存在性）；支付已取消订单返回 `80001`；无物流记录返回 `80002`；`SHIPPED → RECEIVED` 成功且重复确认返回 `50001`。
-- **未覆盖**：物流的 `PAID → SHIPPED → DELIVERED` 两个方法没有 HTTP 出口，本轮只能用 SQL 夹具构造 `SHIPPED` 状态来验证查询与收货流转，方法本身仍只有 `LogisticsServiceImplTest` 的单元测试覆盖。阶段九接入商家权限开放接口后需补真实验证。
+- **未覆盖**：物流的 `PAID → SHIPPED → DELIVERED` 两个方法在阶段八没有 HTTP 出口，当时只能用 SQL 夹具构造 `SHIPPED` 状态验证查询与收货流转。**阶段九 9.1 已开放商家端接口并完成真实链路验证**，见下节。
+
+### 阶段九 9.1：商家端（已完成，2026-09-18）
+
+设计文档：`docs/superpowers/specs/2026-09-18-merchant-module-design.md`
+
+- **账号模型**：`admin_user` 新增 `merchant_id`（`init.sql` 已同步）。`SUPER_ADMIN` 为空、不可登录商家端；`ADMIN` 必填。种子账号 `shoptest_a`（商家 A）、`shoptest_b`（商家 B，隔离验证用）、`superadmin`，口令哈希由文档中的 jshell 命令生成，**仓库内不含明文**。
+- **认证独立一套**：`MerchantJwtUtil`（密钥读 `MERCHANT_JWT_SECRET`）、`MerchantContext`、`MerchantAuthFilter`、`MerchantSecurityConfig`。**`JwtUtil` / `JwtAuthFilter` / `UserContext` / `SecurityConfig` 一行未改**——`SecurityConfig` 无 `@Order` 取 `LOWEST_PRECEDENCE`，商家链 `@Order(1)` + `securityMatcher` 先匹配，Spring Security 只跑第一个匹配的链，两条认证路径互不经过。
+- **`MerchantAuthFilter` 刻意不是 `@Component`**：Spring Boot 会把容器中任何 Filter bean 自动注册到全局 Servlet 链上，那样它对所有路径生效。由 `MerchantSecurityConfig` 直接 `new` 出来只挂商家链。
+- **接口**：`POST /api/merchant/login`（放行）、`POST|PUT /api/merchant/products`、`PUT .../off-shelf`、`GET /api/merchant/orders`、`POST .../{orderNo}/ship`、`POST .../{orderNo}/deliver`。
+- **归属隔离**：商品 `merchant_id` 强制取自上下文；改/下架/发货前校验归属，不存在与不属于本店同码值。订单归属经 `order_item → product_sku → product.merchant_id` 推导，只返回本店明细；`MerchantOrderMapper.xml` 放在商家模块内，**不改动 order 模块**。
+- **SKU 全量覆盖语义**：编辑时带 `id` 的更新、不带的添加、未提及的删除；更新前必须校验该 SKU 确属本商品，否则传入别家 SKU 的 id 就能改到别人的数据。
+- **唯一触碰阶段八之处**：`LogisticsService` 新增 `shipOrderForMerchant` / `markDeliveredForMerchant`，因为原方法用 `UserContext` 校验归属而商家请求下该上下文为空。把流转提取为私有方法共用，原方法行为不变。
+- **错误码**：`9xxxx` 段，见 `ResultStatus`。
+- 测试：`MerchantJwtUtilTest`(4)、`MerchantAuthServiceImplTest`(4)、`MerchantProductServiceImplTest`(4)、`MerchantOrderServiceImplTest`(4)。
+- **端到端验证**：登录 → 上架（SPU + 2 SKU）→ C 端可见 → C 端下单 → 商家查本店订单 → 发货 → 送达 → C 端收货，全链路通过；跨商家隔离（改商品 `90000`、发货 `90001`、订单列表为空）与 C 端 token 打商家接口 403 均已验证。
+
+> **造数注意**：发货的 `company` 等字段含中文，必须用 UTF-8 文件 `--data-binary @file`；直接 `curl -d` 会被 Git Bash 按 GBK 发出，服务端报 `Invalid UTF-8 start byte`。本轮踩过一次。

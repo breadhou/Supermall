@@ -69,6 +69,11 @@ springdoc:
 mall:
   coupon:
     expiration-fixed-delay-ms: 60000
+  merchant:
+    # 商家端 JWT 独立密钥，必须由环境变量注入；刻意不给默认值，缺失时启动即失败。
+    # 与 C 端 JwtUtil 的密钥不同，隔离在签名层面成立。
+    jwt-secret: ${MERCHANT_JWT_SECRET}
+    access-expire-ms: 7200000
   seckill:
     path-ttl-seconds: 60
     result-ttl-seconds: 3600

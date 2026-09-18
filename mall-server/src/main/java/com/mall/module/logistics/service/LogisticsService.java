@@ -21,4 +21,16 @@ public interface LogisticsService {
      */
     LogisticsVO markDelivered(Long orderId);
 
+    /**
+     * Ship on behalf of a merchant.  The caller has already established that
+     * the order contains items belonging to the current merchant, so this
+     * entry point deliberately skips the C-end ownership check — that check
+     * compares against {@code UserContext}, which is empty on a merchant
+     * request.
+     */
+    LogisticsVO shipOrderForMerchant(Long orderId, ShipOrderDTO dto);
+
+    /** Deliver on behalf of a merchant.  Same ownership reasoning as above. */
+    LogisticsVO markDeliveredForMerchant(Long orderId);
+
 }

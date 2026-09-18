@@ -227,9 +227,11 @@ CREATE TABLE admin_user (
     username   VARCHAR(64)  NOT NULL COMMENT '用户名',
     password   VARCHAR(256) NOT NULL COMMENT 'BCrypt 加密',
     role       VARCHAR(32)  NOT NULL DEFAULT 'ADMIN' COMMENT '角色：ADMIN/SUPER_ADMIN',
+    merchant_id BIGINT      DEFAULT NULL COMMENT 'FK → merchant.id，ADMIN 必填、SUPER_ADMIN 为空',
     created_at DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
     PRIMARY KEY (id),
-    UNIQUE KEY uk_username (username)
+    UNIQUE KEY uk_username (username),
+    KEY idx_merchant_id (merchant_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='管理员';
 
 CREATE TABLE payment_record (

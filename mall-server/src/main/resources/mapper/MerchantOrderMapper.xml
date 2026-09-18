@@ -1,0 +1,67 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.mall.module.merchant.mapper.MerchantOrderMapper">
+
+    <!--
+      归属推导：order -> order_item -> product_sku -> product.merchant_id。
+      一张订单只要含本店商品就出现在本店列表里；storeAmount 只累加本店明细，
+      与订单的 total_amount（含其他商家商品与整单优惠）不是一回事。
+    -->
+    <select id="selectStoreOrders" resultType="com.mall.module.merchant.entity.vo.MerchantOrderVO">
+        SELECT o.id            AS orderId,
+               o.order_no      AS orderNo,
+               o.status        AS status,
+               o.created_at    AS createdAt,
+               a.receiver      AS receiver,
+               a.phone         AS phone,
+               CONCAT(IFNULL(a.province, ''), IFNULL(a.city, ''),
+                      IFNULL(a.district, ''), IFNULL(a.detail, '')) AS address,
+               (SELECT SUM(oi2.price * oi2.quantity)
+                  FROM order_item oi2
+                  JOIN product_sku ps2 ON ps2.id = oi2.sku_id
+                  JOIN product p2 ON p2.id = ps2.product_id
+                 WHERE oi2.order_id = o.id
+                   AND p2.merchant_id = #{merchantId})  AS storeAmount
+          FROM `order` o
+          LEFT JOIN address a ON a.id = o.address_id
+         WHERE EXISTS (SELECT 1
+                         FROM order_item oi
+                         JOIN product_sku ps ON ps.id = oi.sku_id
+                         JOIN product p ON p.id = ps.product_id
+                        WHERE oi.order_id = o.id
+                          AND p.merchant_id = #{merchantId})
+        <if test="status != null and status != ''">
+           AND o.status = #{status}
+        </if>
+         ORDER BY o.created_at DESC, o.id DESC
+    </select>
+
+    <select id="selectStoreOrderItems" resultType="com.mall.module.merchant.entity.vo.MerchantOrderItemVO">
+        SELECT oi.order_id AS orderId,
+               oi.sku_id   AS skuId,
+               oi.price    AS price,
+               oi.quantity AS quantity,
+               ps.specs    AS specs,
+               ps.image    AS image,
+               p.name      AS productName
+          FROM order_item oi
+          JOIN product_sku ps ON ps.id = oi.sku_id
+          JOIN product p ON p.id = ps.product_id
+         WHERE p.merchant_id = #{merchantId}
+           AND oi.order_id IN
+        <foreach collection="orderIds" item="id" open="(" separator="," close=")">
+            #{id}
+        </foreach>
+    </select>
+
+    <select id="countStoreOrderItems" resultType="long">
+        SELECT COUNT(*)
+          FROM order_item oi
+          JOIN product_sku ps ON ps.id = oi.sku_id
+          JOIN product p ON p.id = ps.product_id
+         WHERE oi.order_id = #{orderId}
+           AND p.merchant_id = #{merchantId}
+    </select>
+
+</mapper>

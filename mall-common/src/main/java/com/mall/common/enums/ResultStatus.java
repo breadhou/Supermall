@@ -44,7 +44,14 @@ public enum ResultStatus {
     PAYMENT_NOT_EXIST(80000, "支付记录不存在"),
     PAYMENT_STATUS_ERROR(80001, "支付状态不允许此操作"),
     LOGISTICS_NOT_EXIST(80002, "物流记录不存在"),
-    LOGISTICS_STATUS_ERROR(80003, "物流状态不允许此操作");
+    LOGISTICS_STATUS_ERROR(80003, "物流状态不允许此操作"),
+
+    // ==================== 商家模块 90000 ====================
+    MERCHANT_PRODUCT_FORBIDDEN(90000, "无权操作该商品"),
+    MERCHANT_ORDER_FORBIDDEN(90001, "无权操作该订单"),
+    MERCHANT_LOGIN_FAILED(90002, "商家账号或密码错误"),
+    MERCHANT_NOT_BOUND(90003, "该账号未绑定商家，不能登录商家端"),
+    MERCHANT_DISABLED(90004, "商家已被禁用");
 
     private final int code;
     private final String message;
