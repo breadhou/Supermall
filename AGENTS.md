@@ -78,8 +78,15 @@ java -jar mall-server/target/mall-server-1.0.0.jar --server.port=8081 --spring.p
 |------|----|------|
 | 用户 A | `2100109502413639680` | 用户名 `coupontest_a` |
 | 用户 B | `2100109503449632768` | 用户名 `coupontest_b` |
-| 商品 SKU | `930000000000000001` / `930000000000000002` | 199.99 / 299.99 |
-| 券 | `940000000000000001`~`...004` | 满减20 / 8折 / 并发券(total=2) / 过期券(expire_day=1) |
+| 商品 SKU | `930000000000000001` / `930000000000000002` | 199.99 / 299.99；`...003` 为 2026-09-18 新增的 60.00 低价夹具 SKU，用于测折扣与最低消费门槛 |
+| 券 | `940000000000000001`~`...004` | 满减20(min100) / 8折(min50) / 并发券(total=2) / 过期券(expire_day=1) |
+| 券 | `940000000000000005` | 2026-09-18 新增，并发扩容测试券（total=5），已于该轮被抢空 |
+| 秒杀活动 | `960000000000000001` | 2026-09-18 新增，故障注入验证用（有效的 start/end 时间窗） |
+| 秒杀商品 | `970000000000000001` | 2026-09-18 新增，关联 SKU `930000000000000001`，秒杀价 99.99、库存 100、限购 1 |
+
+> `getPath` 要求用户**必须有收货地址**，否则抛 `SECKILL_FAIL(60002)`；给测试用户建号后记得补地址。
+
+2026-09-18 集成验证另注册了 `itest_a` / `itest_b`（主用）、`race_1`~`race_20`、`concu_1`~`concu_10` 等一次性账号，均为随机口令、不会复现登录；如需重跑验证建议直接新建账号。注意 `concu_1`、`concu_2` 的手机号在上轮已被占用，重复注册会返回 `20003`。
 
 按本文件既有约定，**测试账号密码不写入项目文档**；本地口令请自行记录。
 
@@ -178,8 +185,8 @@ supermall/
 | 阶段四 | 购物车 | cart_item | 已完成 |
 | 阶段五 | 订单模块 | order、order_item、refund | 已完成 |
 | 阶段六 | 秒杀模块 | seckill_activity、seckill_item、seckill_order | 核心实现和集成测试已完成，持续压测待验证 |
-| 阶段七 | 优惠券 | coupon、user_coupon | 核心实现和单元测试已完成，真实集成验证待执行 |
-| 阶段八 | 支付物流 | payment_record、logistics | 核心实现和单元测试已完成，真实集成验证待执行 |
+| 阶段七 | 优惠券 | coupon、user_coupon | 已完成，真实集成验证 2026-09-18 通过 |
+| 阶段八 | 支付物流 | payment_record、logistics | 已完成，真实集成验证 2026-09-18 通过（发货/送达无 HTTP 出口，待阶段九） |
 | 阶段九 | 商家后台 | merchant、admin_user | 待实现 |
 
 ## 当前进度
@@ -245,21 +252,21 @@ supermall/
 
 尚待补齐或验证：
 
-- 订单落库成功但 Redis 结果更新失败的故障注入验证；对应的定时补偿任务已实现。
+- 订单落库成功但 Redis 结果更新失败的故障注入验证；对应的定时补偿任务已实现。**发布失败分支已于 2026-09-18 通过停 RabbitMQ 完成真实验证**（见「已修复的缺陷（2026-09-18）」末尾），「订单已落库但 finalize 失败」这一支仍待验证。
 - 持续流量压测（已完成 16.76 req/s 恒定到达基线，目标高流量和多实例持续压测仍待验证）。
 - 多 API 实例、Redis/RabbitMQ 集群和独立订单消费者的生产式压测。
 - 2026-08-11 曾恢复测试环境并完成真实压测；应用使用 `loadtest` profile 监听 `8081`，独立压测商品为 `994000000000000006`。该轮结束后测试进程已停止，当前不能假定 Redis、RabbitMQ AMQP 或应用仍在运行。
 
-## 测试覆盖基线（2026-09-16 核实）
+## 测试覆盖基线（2026-09-18 核实）
 
-**权威数字**：`mvn test` 共 **154 个测试，0 失败 / 0 错误 / 0 跳过**，24 个测试类。
+**权威数字**：`mvn test` 共 **162 个测试，0 失败 / 0 错误 / 0 跳过**，27 个测试类。
 
 | 模块 | 测试数 | 测试类 |
 |------|--------|--------|
 | mall-common | 5 | `SnowflakeIdUtilTest`(5) |
 | mall-security | 12 | `JwtAuthFilterTest`(4)、`JwtUtilTest`(8) |
 | mall-infra | 6 | `CouponStockRedisServiceTest`(2)、`RedisServiceTest`(4) |
-| mall-server | 131 | 19 个测试类 |
+| mall-server | 139 | 22 个测试类 |
 
 执行方式（本机 `mvn` 不在 PATH）：
 
@@ -277,13 +284,13 @@ supermall/
 | Controller | 5 / 13 | 38% |
 | Util | 2 / 2 | 100% |
 
-零覆盖的高风险类：
+零覆盖的高风险类：仅剩 `UserContext`。
 
-- `SeckillCompensationTask`（110 行）：pending 状态补偿与库存回滚。已读代码，逻辑正确（PROCESSING 的 `processingAt` 由 `seckill_claim.lua` 保证非空，此前怀疑的「永久跳过」不成立）。待办三项：
-  1. **补测试**，重点锁住 `repairOne` 中「**先查 `seckill_order` 再决定回滚**」的顺序 —— 这是防止「消费者卡顿超时被回滚、随后又提交订单」产生数据不一致的关键。
-  2. **修硬编码 TTL**：`SeckillCompensationTask:85` 与 `SeckillRedisStateService:115` 都写死 `3600`，绕过了 `mall.seckill.result-ttl-seconds`。消费端 `SeckillConsumer:110` 读的是配置，两条路径会静默分叉。
-  3. **`rollback` 返回 `-1`（库存 key 缺失）被静默吞掉**，无日志无 metric，该故障模式在监控上不可见。
-- `SeckillRedisStateService`、`UserContext`。
+`SeckillCompensationTask`（110 行）与 `SeckillRedisStateService` 已于 2026-09-18 补齐测试并修掉三个问题：
+
+- `SeckillCompensationTaskTest`（5 个用例）锁住 `repairOne` 的顺序不变量：**`seckill_order` 必须先于回滚决策被查询**。最关键的用例把 pending 置为 `PROCESSING` 且 `processingAt` 已远超 `processing-timeout-ms`——即「看起来可以回滚」——同时存在已提交订单，断言此时必须 `finalizeSuccess` 而非 `rollback`。这正是防止「消费者卡顿超时被回滚、随后又提交订单」导致超卖的关键（此前只是读过代码认为正确，现在是锁住的）。
+- 同文件另锁住：无订单时才回滚、`PROCESSING` 未超时不动作、`finalizeSuccess` 用的是注入的 TTL 而非字面量、`rollback == -1` 必须记 `rollback_stock_missing` 指标。
+- `SeckillRedisStateServiceTest`（2 个用例）用打桩捕获 Lua 的 ARGV，锁住 TTL 确实被转发进脚本。
 
 ### 多实例部署的 ID 冲突风险（待处理）
 
@@ -310,6 +317,16 @@ supermall/
 2. **越权/不存在时静默成功**：`updateAddress` 原本返回 `null`，Controller 直接 `result.success(null)`，导致修改他人地址返回 `code 0` 成功。现改为抛 `BusinessException(ADDRESS_NOT_EXIST)`（新增码值 `20004`）。
 
 `SeckillConsumer`（289 行）已由 `SeckillConsumerTest` 覆盖，17 个用例聚焦 ACK/NACK 语义、幂等分支与快照字段兼容回退。
+
+### 已修复的缺陷（2026-09-18）
+
+1. **`useCoupon` 中 `markExpired` 的写入被自身事务回滚**：`CouponServiceImpl.useCoupon` 带 `@Transactional`，过期分支先 `markExpired()` 再抛 `BusinessException(COUPON_EXPIRED)`，抛异常触发回滚把这次 UPDATE 一起撤销，券在库里仍是 `UNUSED`。属永不生效的死写入。已删除该调用（过期状态由 `listUserCoupons` 与 `@Scheduled expireCoupons` 落库，实测定时任务能在 60s 内翻转）。
+   - **根因教训**：原有单元测试 `useCoupon_shouldMarkExpiredAndReject` 断言 `verify(userCouponMapper).update(...)`，把这个 bug 当成了正确行为 —— Mock 测试看不见事务回滚。已改写为 `useCoupon_shouldRejectExpiredCouponWithoutUpdate`。**写涉及事务的副作用测试时，要断言「提交后的最终状态」，而不是「方法内调用过某次写入」。**
+2. **两处硬编码 `3600` 绕过配置**：`SeckillCompensationTask` 的 `finalizeSuccess` 与 `SeckillRedisStateService.rollback` 的 Lua ARGV[5] 都写死 3600，无视 `mall.seckill.result-ttl-seconds`，与读配置的消费端静默分叉。已给任务类加 `@Value` 注入，并给 `rollback` 增加 `resultTtlSeconds` 参数（与 `finalizeSuccess`/`reserve` 对齐），三处调用点全部改传配置值。
+3. **补偿任务静默吞掉 `rollback == -1`**：Lua 返回 `-1` 表示库存 key 不可用、预占数量**无法归还**，是真实超卖风险信号，原本无日志无 metric。已补 `log.warn` + `recordCompensation("rollback_stock_missing")`。注意 `SeckillConsumer` 的死信路径原本就正确处理了 `-1`，只有补偿任务这个「最后一道防线」在静默。
+4. **405 被兜底成通用错误**：用错 HTTP 方法原返回 `code -1 / 系统异常`，把路由错误伪装成服务端崩溃。已新增处理器返回 HTTP 405 + `METHOD_NOT_ALLOWED(10002)`，并降为 `log.warn`。
+
+**秒杀回滚路径的真实环境验证（2026-09-18）**：因改动涉及秒杀热路径的 `rollback` 签名，用故障注入做了真实触发——建夹具（活动 + 秒杀商品 + 预热）后先跑通正常链路（`WAITING → SUCCESS`、订单落库、Redis 与 DB 库存一致），再**停掉 RabbitMQ 容器**后执行秒杀，强制走发布失败分支：入口正确返回 `60002`（confirm 未成功就不返回 WAITING）、结果 `FAILED`、**Redis 库存回滚到位**、限购 key 释放、无订单落库；重启容器后再执行恢复正常（`WAITING → SUCCESS`，库存 98/98 一致，主队列与死信队列均空）。
 
 无测试的 Controller：`CartController`、`OrderController`、`AddressController`、`AuthController`、`ProductController`、`UserCouponController`、`ReviewController`、`SkuController`。
 
@@ -402,7 +419,7 @@ param(
 - 本轮测试通过 WSL 地址 `172.25.212.154` 连接 Redis `6379` 和 RabbitMQ AMQP `5672`，RabbitMQ 管理端 `15672` 与应用 `8081` 可用；WSL Ubuntu 正在运行，但 Windows `docker` 命令不可用。若下次环境已停止，恢复前需重新确认服务端口，并以 `--server.port=8081 --spring.profiles.active=loadtest` 启动应用，同时临时覆盖 Redis/RabbitMQ host。
 - 单机阶段结论：16.7 req/s 可稳定持续 60 秒；约 952 req/s 的短时探针全部成功；将目标提高到 2k/5k 后，JMeter 实际到达率受单机连接接入能力限制在约 1,036/1,263 req/s，并出现连接拒绝。业务成功请求始终保持库存、订单、Redis 和 MQ 一致，未发现超卖、重复订单或消息丢失。单机验证到此结束，10k req/s 的 60 秒云平台/多实例验证留到项目功能完成后。
 
-### 阶段七：优惠券模块（核心实现和单元测试已完成，真实集成验证待执行）
+### 阶段七：优惠券模块（已完成，真实集成验证 2026-09-18 通过）
 
 - 新增 `Coupon`、`UserCoupon` PO 和对应 MyBatis-Plus Mapper。
 - 新增优惠券模板查询 `GET /api/coupons`、领取 `POST /api/coupons/{couponId}/receive`，以及用户优惠券列表 `GET /api/user/coupons?status=UNUSED|USED|EXPIRED`。
@@ -410,9 +427,16 @@ param(
 - 支持 `FULL_REDUCTION` 满减和 `DISCOUNT` 折扣（折扣比例为 `0~1`），校验最低消费金额并返回订单优惠前金额、优惠金额和实付金额。
 - `POST /api/orders` 传入已有 `couponId` 时会在订单事务内校验并将用户券条件更新为 `USED`，订单保存优惠后的 `total_amount` 和 `coupon_id`；取消 `PENDING` 订单会恢复未过期优惠券，过期券在查询、使用和定时任务中转为 `EXPIRED`。
 - 新增 `CouponServiceImplTest` 10 个、`CouponControllerTest` 3 个和 `CouponStockRedisServiceTest` 2 个测试用例；截至本轮，当时的 16 个测试类均由 IntelliJ MCP 运行并以 `exitCode=0` 通过，IDE 项目构建成功。（测试类总数现为 21，见「测试覆盖基线」。）
-- 本阶段尚未启动 MySQL、Redis、RabbitMQ 做真实优惠券领取/下单集成验证；需要环境恢复后验证 Redis 库存、唯一索引、订单金额和取消回滚的一致性。
+- 2026-09-18 已完成真实集成验证（MySQL + Redis + RabbitMQ + 应用全部真实运行，环境启动方式见「本地测试环境启动」）：
+  - 领取后 Redis 计数与 DB 领取数一致（100 → 99，DB 1 行）；同用户重复领取幂等，两次返回同一 `user_coupon.id`。
+  - **并发无超发**：6 路抢 2 张券恰好 2 成功 / 4 拒绝；20 路抢 5 张券恰好 5 成功 / 15 拒绝 / 0 异常，Redis 均为 0、DB 行数与去重用户数均等于券总量。
+  - **同用户 10 路并发领同一券**：10 个请求返回同一 `id`，Redis 仅减 1（其余 9 个失败路径的 `reserve` 扣减被正确回滚），DB 1 行 —— 唯一索引冲突幂等分支与 Redis 库存回滚同时得到验证。
+  - 满减下单 199.99 − 20.00 = 179.99、折扣下单 60.00 × 0.8 = 48.00，`order_item` 保留原价快照；取消订单后券恢复 `UNUSED` 且 `used_at` 清空。
+  - 低于门槛 / 已使用 / 越权 / 不存在 / 已过期分别返回 `70006` / `70005` / `70004` / `70000` / `70001`。
+- 该轮集成验证发现并修复一个缺陷：`useCoupon` 过期分支的 `markExpired` 写入被自身的 `@Transactional` 回滚，是永不生效的死写入。已删除该调用（过期状态由 `listUserCoupons` 与 `@Scheduled expireCoupons` 落库，实测定时任务能在 60s 内翻转）。
+  - **注意**：原有单元测试 `useCoupon_shouldMarkExpiredAndReject` 断言的是 `verify(userCouponMapper).update(...)`，即把这个 bug 当成了正确行为 —— Mock 测试看不见事务回滚。已改写为 `useCoupon_shouldRejectExpiredCouponWithoutUpdate`。**写涉及事务的副作用测试时，要确认断言的是「提交后的最终状态」，而不是「方法内调用过某次写入」。**
 
-### 阶段八：支付物流模块（核心实现和单元测试已完成，真实集成验证待执行）
+### 阶段八：支付物流模块（已完成，真实集成验证 2026-09-18 通过）
 
 - 新增 `PaymentRecord` PO、Mapper、Service 和 VO；模拟支付接口为 `POST /api/orders/{orderId}/pay`，查询接口为 `GET /api/orders/{orderId}/payment`。
 - 支付只允许当前用户操作自己的 `PENDING` 订单；事务先锁定订单行，再创建或更新 `payment_record`，成功后将订单推进到 `PAID`。
@@ -421,4 +445,5 @@ param(
 - 物流服务层已实现 `PAID → SHIPPED → DELIVERED` 的发货和送达流转、订单归属校验及重复发货/送达保护；由于商家后台尚未完成，发货和送达方法暂不暴露为用户 HTTP 接口，阶段九接入商家权限后再开放。
 - 为支付记录和物流记录增加 `order_id` 唯一索引，避免一单多条支付/物流记录；订单状态新增兼容性的 `DELIVERED`，原有 `SHIPPED → RECEIVED` 确认收货接口仍保留，同时支持 `DELIVERED → RECEIVED`。
 - `ResultStatus` 新增 80000 段支付/物流错误码；新增 `PaymentServiceImplTest` 6 个、`PaymentControllerTest` 2 个、`LogisticsServiceImplTest` 6 个和 `LogisticsControllerTest` 1 个测试用例，均已由 IntelliJ MCP 运行并以 `exitCode=0` 通过，IDE 增量构建成功。
-- 尚未使用恢复的 MySQL 做真实支付、发货、物流查询和订单状态联动验证；环境恢复后需验证唯一索引、事务回滚、重复请求、越权访问和订单/支付/物流最终一致性。
+- 2026-09-18 已完成真实集成验证：支付 `PENDING` 订单生成 `payment_record` 并使订单转 `PAID`；重复支付返回同一记录且 `payment_record` 仍为 1 行；他人代付、他人查询支付与物流均返回 `50000 ORDER_NOT_EXIST`（越权与不存在同响应，不泄漏订单存在性）；支付已取消订单返回 `80001`；无物流记录返回 `80002`；`SHIPPED → RECEIVED` 成功且重复确认返回 `50001`。
+- **未覆盖**：物流的 `PAID → SHIPPED → DELIVERED` 两个方法没有 HTTP 出口，本轮只能用 SQL 夹具构造 `SHIPPED` 状态来验证查询与收货流转，方法本身仍只有 `LogisticsServiceImplTest` 的单元测试覆盖。阶段九接入商家权限开放接口后需补真实验证。

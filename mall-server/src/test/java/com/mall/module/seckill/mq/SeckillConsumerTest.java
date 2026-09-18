@@ -292,7 +292,7 @@ class SeckillConsumerTest {
 
     @Test
     void consumeDeadLetter_shouldAckAfterSuccessfulRollback() throws Exception {
-        when(redisStateService.rollback(any(), eq(true))).thenReturn(1L);
+        when(redisStateService.rollback(any(), eq(true), anyLong())).thenReturn(1L);
 
         consumer.consumeDeadLetter(message(), channel, DELIVERY_TAG);
 
@@ -303,7 +303,7 @@ class SeckillConsumerTest {
     @Test
     void consumeDeadLetter_shouldRequeueWhenRollbackCannotProceed() throws Exception {
         // -1 means a consumer already claimed the message; leave it for compensation.
-        when(redisStateService.rollback(any(), eq(true))).thenReturn(-1L);
+        when(redisStateService.rollback(any(), eq(true), anyLong())).thenReturn(-1L);
 
         consumer.consumeDeadLetter(message(), channel, DELIVERY_TAG);
 
@@ -313,7 +313,7 @@ class SeckillConsumerTest {
 
     @Test
     void consumeDeadLetter_shouldRequeueWhenRollbackThrows() throws Exception {
-        when(redisStateService.rollback(any(), eq(true)))
+        when(redisStateService.rollback(any(), eq(true), anyLong()))
                 .thenThrow(new RuntimeException("redis unavailable"));
 
         consumer.consumeDeadLetter(message(), channel, DELIVERY_TAG);

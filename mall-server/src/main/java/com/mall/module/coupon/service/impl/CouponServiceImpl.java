@@ -160,7 +160,8 @@ public class CouponServiceImpl implements CouponService {
             throw new BusinessException(ResultStatus.COUPON_STATUS_ERROR);
         }
         if (isExpired(userCoupon, coupon, LocalDateTime.now())) {
-            markExpired(userCoupon);
+            // 本方法带 @Transactional，此处抛出的异常会回滚事务，标记 EXPIRED 的写入无法提交。
+            // 过期状态由 listUserCoupons 与 @Scheduled expireCoupons 负责落库。
             throw new BusinessException(ResultStatus.COUPON_EXPIRED);
         }
         if (coupon.getMinAmount() != null && orderAmount.compareTo(coupon.getMinAmount()) < 0) {

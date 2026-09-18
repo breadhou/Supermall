@@ -10,6 +10,7 @@ public enum ResultStatus {
     EXCEPTION(-1, "系统异常"),
     PARAM_ERROR(10000, "参数错误"),
     SYSTEM_ERROR(10001, "系统错误"),
+    METHOD_NOT_ALLOWED(10002, "请求方法不支持"),
     DATA_ALREADY_EXIST(10008, "数据已经存在"),
     DATA_NOT_FOUND(10009, "数据不存在"),
 

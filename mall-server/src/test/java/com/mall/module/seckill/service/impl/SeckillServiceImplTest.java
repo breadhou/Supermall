@@ -241,7 +241,7 @@ class SeckillServiceImplTest {
         );
 
         assertEquals(ResultStatus.SECKILL_FAIL, exception.getStatus());
-        verify(redisStateService).rollback(any(SeckillMessage.class), eq(false));
+        verify(redisStateService).rollback(any(SeckillMessage.class), eq(false), anyLong());
     }
 
     @Test

@@ -3,6 +3,9 @@ package com.mall.common.handler;
 import com.mall.common.enums.ResultStatus;
 import com.mall.common.exception.BusinessException;
 import com.mall.common.result.Result;
+import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseEntity;
+import org.springframework.web.HttpRequestMethodNotSupportedException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 import lombok.extern.slf4j.Slf4j;
@@ -24,7 +27,15 @@ public class GlobalExceptionHandler {
         log.error(e.getStatus().getMessage());
         return Result.fail(e.getStatus());
     }
-    // 4. 兜底拦截：拦截所有其他未预料到的系统异常（防止系统直接崩溃）
+    // 4. 请求方法不支持：属协议层错误，返回语义化的 405，不当作系统异常
+    @ExceptionHandler(HttpRequestMethodNotSupportedException.class)
+    public ResponseEntity<Result<Void>> handleMethodNotSupported(HttpRequestMethodNotSupportedException e) {
+        log.warn("request_method_not_allowed: {}", e.getMessage());
+        return ResponseEntity.status(HttpStatus.METHOD_NOT_ALLOWED)
+                .body(Result.fail(ResultStatus.METHOD_NOT_ALLOWED));
+    }
+
+    // 5. 兜底拦截：拦截所有其他未预料到的系统异常（防止系统直接崩溃）
     @ExceptionHandler(Exception.class)
     public Result<Void> handleException(Exception e) {
         log.error("unknown_failure", e);

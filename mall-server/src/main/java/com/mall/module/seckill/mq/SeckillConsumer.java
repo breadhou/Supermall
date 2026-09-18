@@ -144,7 +144,7 @@ public class SeckillConsumer {
                 return;
             }
 
-            Long rollbackResult = redisStateService.rollback(message, true);
+            Long rollbackResult = redisStateService.rollback(message, true, resultTtlSeconds);
             if (rollbackResult == null || rollbackResult == -1L) {
                 throw new IllegalStateException("Unable to roll back seckill reservation");
             }

@@ -319,7 +319,7 @@ public class SeckillServiceImpl implements SeckillService {
 
     private void rollbackAfterPublishFailure(SeckillMessage message) {
         try {
-            Long rollbackResult = redisStateService.rollback(message, false);
+            Long rollbackResult = redisStateService.rollback(message, false, resultTtlSeconds);
             if (rollbackResult != null && rollbackResult == 3L) {
                 // A consumer won the race.  It owns the reservation now; the
                 // consumer or compensation task will finalize it safely.

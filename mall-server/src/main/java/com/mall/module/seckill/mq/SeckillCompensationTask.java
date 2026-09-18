@@ -37,6 +37,9 @@ public class SeckillCompensationTask {
     @Value("${mall.seckill.processing-timeout-ms:120000}")
     private long processingTimeoutMs = 120000;
 
+    @Value("${mall.seckill.result-ttl-seconds:3600}")
+    private long resultTtlSeconds = 3600;
+
     @Scheduled(fixedDelayString = "${mall.seckill.compensation.fixed-delay-ms:5000}")
     public void repairPendingMessages() {
         long now = System.currentTimeMillis();
@@ -82,7 +85,7 @@ public class SeckillCompensationTask {
                         .eq(SeckillOrder::getSeckillItemId, itemId)
         );
         if (existing != null) {
-            Long result = redisStateService.finalizeSuccess(message, 3600);
+            Long result = redisStateService.finalizeSuccess(message, resultTtlSeconds);
             if (result != null && (result == 1L || result == 2L)) {
                 record("finalized");
             }
@@ -96,9 +99,16 @@ public class SeckillCompensationTask {
             return;
         }
 
-        Long result = redisStateService.rollback(message, true);
+        Long result = redisStateService.rollback(message, true, resultTtlSeconds);
         if (result != null && (result == 1L || result == 2L)) {
             record("rolled_back");
+        } else if (result != null && result == -1L) {
+            // The stock key is gone, so the reserved quantity could not be
+            // returned.  Staying silent here hides an oversell risk from both
+            // the log and the compensation metrics.
+            log.warn("Seckill rollback could not restore stock, stock key unavailable, itemId={}, messageId={}",
+                    itemId, messageId);
+            record("rollback_stock_missing");
         }
     }
 

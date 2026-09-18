@@ -97,7 +97,7 @@ public class SeckillRedisStateService {
      * means a consumer already claimed the message, so the caller must leave
      * the state for the consumer/compensation task to finish.
      */
-    public Long rollback(SeckillMessage message, boolean allowProcessing) {
+    public Long rollback(SeckillMessage message, boolean allowProcessing, long resultTtlSeconds) {
         List<String> keys = List.of(
                 SeckillKey.stockKey(message.getSeckillItemId()),
                 SeckillKey.resultKey(message.getSeckillItemId(), message.getUserId()),
@@ -112,7 +112,7 @@ public class SeckillRedisStateService {
                 String.valueOf(message.getUserId()),
                 String.valueOf(message.getQuantity()),
                 allowProcessing ? "1" : "0",
-                String.valueOf(3600)
+                String.valueOf(resultTtlSeconds)
         );
     }
 

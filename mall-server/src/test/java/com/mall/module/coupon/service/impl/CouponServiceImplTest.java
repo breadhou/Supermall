@@ -187,11 +187,10 @@ class CouponServiceImplTest {
     }
 
     @Test
-    void useCoupon_shouldMarkExpiredAndReject() {
+    void useCoupon_shouldRejectExpiredCouponWithoutUpdate() {
         userCoupon.setCreatedAt(LocalDateTime.now().minusDays(31));
         when(couponMapper.selectById(COUPON_ID)).thenReturn(coupon);
         when(userCouponMapper.selectOne(any())).thenReturn(userCoupon);
-        when(userCouponMapper.update(isNull(), any(UpdateWrapper.class))).thenReturn(1);
 
         BusinessException exception = assertThrows(
                 BusinessException.class,
@@ -199,8 +198,9 @@ class CouponServiceImplTest {
         );
 
         assertEquals(ResultStatus.COUPON_EXPIRED, exception.getStatus());
-        assertEquals("EXPIRED", userCoupon.getStatus());
-        verify(userCouponMapper).update(isNull(), any(UpdateWrapper.class));
+        // useCoupon 是 @Transactional，紧接着抛出的异常会回滚整个事务。在这里标记 EXPIRED
+        // 的 UPDATE 永远提交不了，属无效写入；过期状态由列表查询与 @Scheduled expireCoupons 落库。
+        verify(userCouponMapper, never()).update(isNull(), any(UpdateWrapper.class));
     }
 
     @Test
