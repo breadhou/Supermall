@@ -51,7 +51,10 @@ public enum ResultStatus {
     MERCHANT_ORDER_FORBIDDEN(90001, "无权操作该订单"),
     MERCHANT_LOGIN_FAILED(90002, "商家账号或密码错误"),
     MERCHANT_NOT_BOUND(90003, "该账号未绑定商家，不能登录商家端"),
-    MERCHANT_DISABLED(90004, "商家已被禁用");
+    MERCHANT_DISABLED(90004, "商家已被禁用"),
+    ADMIN_LOGIN_FAILED(90005, "管理员账号或密码错误"),
+    ADMIN_NOT_SUPER(90006, "该账号不是平台管理员"),
+    ADMIN_USER_NOT_EXIST(90007, "用户不存在");
 
     private final int code;
     private final String message;

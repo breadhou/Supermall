@@ -201,7 +201,7 @@ supermall/
 | 阶段六 | 秒杀模块 | seckill_activity、seckill_item、seckill_order | 核心实现和集成测试已完成，持续压测待验证 |
 | 阶段七 | 优惠券 | coupon、user_coupon | 已完成，真实集成验证 2026-09-18 通过 |
 | 阶段八 | 支付物流 | payment_record、logistics | 已完成，真实集成验证 2026-09-18 通过（发货/送达无 HTTP 出口，待阶段九） |
-| 阶段九 | 商家后台 | merchant、admin_user | 9.1 商家端已完成并端到端验证；9.2 管理后台待实现 |
+| 阶段九 | 商家后台 | merchant、admin_user | 已完成（9.1 商家端 + 9.2 管理后台，均通过真实环境验证） |
 
 ## 当前进度
 
@@ -273,14 +273,14 @@ supermall/
 
 ## 测试覆盖基线（2026-09-18 核实）
 
-**权威数字**：`mvn test` 共 **178 个测试，0 失败 / 0 错误 / 0 跳过**，31 个测试类。
+**权威数字**：`mvn test` 共 **181 个测试，0 失败 / 0 错误 / 0 跳过**，32 个测试类。
 
 | 模块 | 测试数 | 测试类 |
 |------|--------|--------|
 | mall-common | 5 | `SnowflakeIdUtilTest`(5) |
 | mall-security | 16 | `JwtAuthFilterTest`(4)、`JwtUtilTest`(8)、`MerchantJwtUtilTest`(4) |
 | mall-infra | 6 | `CouponStockRedisServiceTest`(2)、`RedisServiceTest`(4) |
-| mall-server | 151 | 26 个测试类 |
+| mall-server | 154 | 27 个测试类 |
 
 执行方式（本机 `mvn` 不在 PATH）：
 
@@ -478,3 +478,23 @@ MyBatis-Plus 配置了逻辑删除字段 `deleted`（`0`=未删除，`1`=已删�
 - **端到端验证**：登录 → 上架（SPU + 2 SKU）→ C 端可见 → C 端下单 → 商家查本店订单 → 发货 → 送达 → C 端收货，全链路通过；跨商家隔离（改商品 `90000`、发货 `90001`、订单列表为空）与 C 端 token 打商家接口 403 均已验证。
 
 > **造数注意**：发货的 `company` 等字段含中文，必须用 UTF-8 文件 `--data-binary @file`；直接 `curl -d` 会被 Git Bash 按 GBK 发出，服务端报 `Invalid UTF-8 start byte`。本轮踩过一次。
+
+### 阶段九 9.2：管理后台（已完成，2026-09-18）
+
+- **认证**：`AdminAuthFilter` + `AdminSecurityConfig`（`@Order(2)` + `securityMatcher("/api/admin/**")`），与商家端**共用签发密钥**（都是内部后台，第三个密钥没有额外收益）。门槛在角色：`role = SUPER_ADMIN` 才拿到 `ROLE_SUPER_ADMIN`。平台管理员的 token **不带 `merchantId`**。
+- **接口**：`POST /api/admin/login`（放行）、`GET /api/admin/users`、`PUT /api/admin/users/{id}/status`、`POST /api/admin/seckill/activities`、`POST /api/admin/coupons`、`GET /api/admin/statistics`。
+- **登录**：密码错与账号不存在同码（`90005`）；密码正确但角色不符返回 `90006`（此时透露「你不是管理员」不泄漏账号是否存在）。
+- **禁用用户是真实生效的**：`UserServiceImpl` 登录时检查 `user.status` 抛 `USER_BANNED`，9.2 只是提供操作入口；`user` 表原本就有 `status` 列。
+- **统计口径**：`gmv` 只累加 `PENDING`/`CANCELLED` 之外的订单，不是所有订单金额之和。
+- **创建秒杀活动**：必须带商品列表；`status` 仅用于展示（秒杀路径按 `start_time`/`end_time` 判断），创建时由时间推导。
+- 测试：`AdminAuthServiceImplTest`(3)。
+- **验证**：SUPER_ADMIN 登录通过；商家账号登录管理端 `90006`；商家 token / C 端 token / 无 token 打 `/api/admin/**` 均 403；禁用用户后其登录被拒、恢复后正常；新建活动经预热 + 倒计时验证**确实可跑**（Redis 500、快照正确）。
+
+### 已知未修问题
+
+**`POST /api/seckill/{itemId}/preheat` 任何 C 端用户都能调用**（2026-09-18 做 9.2 时发现，属阶段六遗留）：
+
+- 该接口挂在 C 端路径 `/api/seckill/**` 上，只要求已登录、不校验角色，作用却是把 Redis 库存**重置**为 `seckill_item.stock` 并重写快照。
+- **实证**：把某秒杀商品的 Redis 库存人为改成 42，用一个刚注册的普通账号调用 preheat，库存被重置回 500。
+- **风险**：秒杀进行中调用会重置库存计数器，而部分预占尚在 Redis 未落库，重置等于让可预占数量凭空增加——**超卖**路径；至少也能把已售罄的商品重新「上架」。注册接口开放，任何人满足前置条件。
+- **建议修法**：preheat 是运营动作，应移到 `/api/admin/**`（阶段九已建好该realm与 `ROLE_SUPER_ADMIN`）；若要支持商家自助预热，再按 `product.merchant_id` 做归属校验。修订后需回归秒杀集成验证——阶段六的压测脚本都依赖这个路径。
