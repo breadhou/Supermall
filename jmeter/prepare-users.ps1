@@ -2,7 +2,10 @@ param(
     [string]$BaseUrl = 'http://localhost:8080',
     [ValidateRange(1, 10000)]
     [int]$UserCount = 100,
-    [string]$Password = 'LoadTest@123456',
+    # 刻意不设默认值：默认口令会被遗忘，最终在某次部署中变成人尽皆知的凭据。
+    # 必须显式传入（建议经 $env:LOADTEST_PASSWORD），否则脚本拒绝运行。
+    [Parameter(Mandatory = $true)]
+    [string]$Password,
     [string]$OutputFile = (Join-Path $PSScriptRoot 'users.csv'),
     [string]$UsernamePrefix = ('loadtest_' + (Get-Date -Format 'yyyyMMddHHmmss'))
 )

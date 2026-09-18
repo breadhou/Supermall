@@ -23,15 +23,16 @@ jmeter/prepare-seckill-data.sql
 在项目根目录执行：
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File .\jmeter\prepare-users.ps1 -UserCount 100
-```
-
-脚本会调用当前运行中的应用注册用户、创建默认地址，并生成 `jmeter/users.csv` 和单独的 `jmeter/setup-user.csv`。默认密码为 `LoadTest@123456`，如需修改：
-
-```powershell
+$env:LOADTEST_PASSWORD = '<你的压测密码>'
 powershell -ExecutionPolicy Bypass -File .\jmeter\prepare-users.ps1 `
-  -UserCount 100 -Password '你的压测密码'
+  -UserCount 100 -Password $env:LOADTEST_PASSWORD
 ```
+
+脚本会调用当前运行中的应用注册用户、创建默认地址，并生成 `jmeter/users.csv` 和单独的 `jmeter/setup-user.csv`。
+
+`-Password` 是**必填参数，没有默认值**——刻意如此。默认口令会被遗忘，最终在某次部署中变成人尽皆知的凭据。请用环境变量传入，不要把口令写进命令行记录或本文件。
+
+生成的 `jmeter/*.csv` 含明文口令，已在 `.gitignore` 中整体排除；不要用 `git add -f` 强制加入。
 
 每个线程需要一行不同的用户；秒杀消费者没有地址时会落入死信队列，因此默认地址是必需的。
 

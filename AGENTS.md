@@ -350,26 +350,26 @@ MyBatis-Plus 配置了逻辑删除字段 `deleted`（`0`=未删除，`1`=已删�
 - 非 GUI 模式执行 JMeter，结果文件放在 `jmeter/runs/` 下的本地输出目录，不提交用户密码、JTL 或 HTML 报告。
 - **`jmeter/runs/` 内含真实 JWT 和明文密码**（`token-paths.csv`、`*-users.csv`），已在 `.gitignore` 中整体排除；`jmeter/report/`、`jmeter/results/`、顶层 `jmeter/*.jtl` 同样忽略。禁止用 `git add -f` 强制加入。
 
-### 待办：移除压测脚本的默认口令（2026-09-16 记录，尚未执行）
+### 已处理：移除压测脚本的默认口令（2026-09-18 完成）
 
-`jmeter/prepare-users.ps1:5` 把 `LoadTest@123456` 作为 `$Password` 的**参数默认值**，`jmeter/README.md:29` 也明文写了该口令。两者已随 `f318b3e` 推送到公开仓库。
+`jmeter/prepare-users.ps1` 曾把压测口令作为 `$Password` 的**参数默认值**，`jmeter/README.md` 也明文写了同一个口令。两者随 `f318b3e` 推送到了公开仓库。
 
 **为什么值得改**：这是「默认凭据」模式。将来若本项目部署到公网、且有人运行该脚本时忘记覆盖参数，就会启用一个人尽皆知的密码。公网扫描器会专门 grep GitHub 找 `[string]$Password = '...'` 这类模式。
 
-**为什么优先级不高**：这些是本机测试夹具 —— MySQL 与应用都只监听 `localhost`，没有对外暴露的服务可以用这组凭据登录，因此当前不可直接利用。真正的风险是**未来部署时的疏忽**，不是当下的泄漏。
+**为什么优先级不高**：这些是本机测试夹具 —— MySQL 与应用都只监听 `localhost`，没有对外暴露的服务可以用这组凭据登录，因此当时不可直接利用。真正的风险是**未来部署时的疏忽**，不是当下的泄漏。
 
-**建议改法**：
+**改法（已完成）**：`$Password` 改为 `[Parameter(Mandatory = $true)]`，不设默认值；`jmeter/README.md` 的示例改为经 `$env:LOADTEST_PASSWORD` 传入，并说明口令刻意无默认值的理由。本文件中原先复述的口令字面量也已抹去 —— 在被跟踪的文档里重复它，正是当初该被 grep 到的模式。
 
-```powershell
-param(
-    [Parameter(Mandatory=$true)][string]$Password,
-    ...
-)
-```
+**已验证的行为**：
+- 语法解析通过。
+- 不带 `-Password` 运行 → 拒绝：`无法处理命令，因为缺少一个或多个必需参数: Password`。
+- 按 README 推荐写法但环境变量未设置 → 拒绝：`无法将自变量绑定到参数 'Password'，因为它是空字符串`（fail-closed，不会静默使用空口令）。
+- 提供口令后正常运行：注册用户并生成 `users.csv` / `setup-user.csv`。
 
-同时把 `jmeter/README.md` 的明文示例改为读取 `$env:LOADTEST_PASSWORD`。
+**注意 `-BaseUrl` 默认是 `http://localhost:8080`**：若应用按 `loadtest` profile 跑在 8081，需显式传 `-BaseUrl http://localhost:8081`，否则连接被拒。README 的示例流程用的是默认 8080，与此一致。
 
-**明确不做的事**：不重写 git 历史。旧口令会留在 `f318b3e` 中，已接受 —— 该值不含真实资产，force-push 的代价（打断所有基于旧历史的克隆）高于收益。若日后决定重写，需另行确认。
+**明确不做的事**：不重写 git 历史。旧口令仍留在 `f318b3e` 中，已接受 —— 该值不含真实资产，force-push 的代价（打断所有基于旧历史的克隆）高于收益。若日后决定重写，需另行确认。
+**仍未处理**：本机 `jmeter/*.csv`（已被 `.gitignore` 排除）里的历史压测账号仍用旧口令，对应数据库中的真实用户。这些是 localhost 专用的夹具，如需彻底消除，重建库或改密即可。
 - 当前压测测试计划为 `jmeter/seckill-load-test.jmx`，用户生成脚本为 `jmeter/prepare-users.ps1`，数据脚本为 `jmeter/prepare-seckill-data.sql`。
 - 已完成第一轮 100 线程压测：30 秒升压、60 秒测试窗口，402 个采样全部 HTTP 成功；100 个新用户实际生成 100 条秒杀订单，MySQL 与 Redis 库存均由 978 降至 878，RabbitMQ 主队列和死信队列均无积压。
 - 本轮结果文件：`jmeter/results/formal-100t-20260731152048.jtl`，HTML 报告目录：`jmeter/report/formal-100t-20260731152048/`。
