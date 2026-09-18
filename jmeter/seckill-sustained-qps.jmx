@@ -29,13 +29,13 @@
         <CSVDataSet guiclass="TestBeanGUI" testclass="CSVDataSet" testname="Preheat Token CSV" enabled="true">
           <stringProp name="delimiter">,</stringProp>
           <stringProp name="fileEncoding">UTF-8</stringProp>
-          <stringProp name="filename">${__P(preheatFile,jmeter/preheat-token.csv)}</stringProp>
+          <stringProp name="filename">${__P(adminTokenFile,jmeter/admin-token.csv)}</stringProp>
           <boolProp name="ignoreFirstLine">true</boolProp>
           <boolProp name="quotedData">true</boolProp>
           <boolProp name="recycle">false</boolProp>
           <stringProp name="shareMode">shareMode.all</stringProp>
           <boolProp name="stopThread">true</boolProp>
-          <stringProp name="variableNames">preheatToken,preheatPath</stringProp>
+          <stringProp name="variableNames">adminToken</stringProp>
         </CSVDataSet>
         <hashTree/>
         <ConfigTestElement guiclass="HttpDefaultsGui" testclass="ConfigTestElement" testname="HTTP Defaults" enabled="true">
@@ -63,7 +63,7 @@
         </IfController>
         <hashTree>
           <HTTPSamplerProxy guiclass="HttpTestSampleGui" testclass="HTTPSamplerProxy" testname="Preheat Seckill Stock" enabled="true">
-            <stringProp name="HTTPSampler.path">/api/seckill/${__P(itemId,940000000000000000)}/preheat</stringProp>
+            <stringProp name="HTTPSampler.path">/api/admin/seckill/items/${__P(itemId,940000000000000000)}/preheat</stringProp>
             <stringProp name="HTTPSampler.method">POST</stringProp>
             <boolProp name="HTTPSampler.follow_redirects">true</boolProp>
             <boolProp name="HTTPSampler.auto_redirects">false</boolProp>
@@ -79,7 +79,7 @@
               <collectionProp name="HeaderManager.headers">
                 <elementProp name="Authorization" elementType="Header">
                   <stringProp name="Header.name">Authorization</stringProp>
-                  <stringProp name="Header.value">Bearer ${preheatToken}</stringProp>
+                  <stringProp name="Header.value">Bearer ${adminToken}</stringProp>
                 </elementProp>
               </collectionProp>
             </HeaderManager>

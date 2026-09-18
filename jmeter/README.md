@@ -36,6 +36,27 @@ powershell -ExecutionPolicy Bypass -File .\jmeter\prepare-users.ps1 `
 
 每个线程需要一行不同的用户；秒杀消费者没有地址时会落入死信队列，因此默认地址是必需的。
 
+## 2.5 准备管理员 token（库存预热用）
+
+**库存预热自阶段九起收归平台管理端**：`POST /api/admin/seckill/items/{itemId}/preheat`，需要 `SUPER_ADMIN` 的 token。原 C 端路径 `/api/seckill/{itemId}/preheat` 已移除——它只要求已登录，任何注册用户都能把 Redis 库存重置为数据库快照，秒杀进行中调用会让可预占数量凭空增加，是超卖路径。
+
+压测计划里的预热步骤因此不能再使用普通用户 token。先生成管理员凭据：
+
+```powershell
+$env:MERCHANT_ADMIN_PASSWORD = '<平台管理员口令>'
+powershell -ExecutionPolicy Bypass -File .\jmeter\prepare-admin-token.ps1 `
+  -BaseUrl http://localhost:8080 -Password $env:MERCHANT_ADMIN_PASSWORD
+```
+
+脚本调用 `/api/admin/login` 校验角色确为 `SUPER_ADMIN` 后生成两个文件：
+
+- `jmeter/admin-token.csv`（`adminToken`）——供 `seckill-execute-qps.jmx`、`seckill-sustained-qps.jmx` 直接使用
+- `jmeter/admin-credentials.csv`（`adminUsername,adminPassword`）——供 `seckill-load-test.jmx` 自己换 token
+
+两个文件都被 `.gitignore` 的 `jmeter/*.csv` 排除。
+
+> 应用的商家端 JWT 密钥由 `MERCHANT_JWT_SECRET` 环境变量提供，缺失时应用无法启动；管理员 token 由同一密钥签发，两者需同时可用。
+
 ## 3. 先做小流量验证
 
 ```powershell
@@ -66,7 +87,7 @@ $users = (Resolve-Path '.\jmeter\users.csv').Path
   -e -o .\jmeter\report\seckill-100t
 ```
 
-测试计划的预热线程组只执行一次，主线程组再读取同一份用户 CSV。不要把 `preheat` 接口放进主线程循环，否则会不断重置 Redis 库存，测试结果无效。
+测试计划的预热线程组只执行一次，主线程组再读取同一份用户 CSV。**不要把预热接口放进主线程循环**，否则会不断重置 Redis 库存，测试结果无效（这正是不该把它留在 C 端的原因之一）。
 
 ## 5. 查看结果
 

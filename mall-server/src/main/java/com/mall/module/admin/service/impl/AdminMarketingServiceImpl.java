@@ -16,6 +16,7 @@ import com.mall.module.seckill.entity.po.SeckillActivity;
 import com.mall.module.seckill.entity.po.SeckillItem;
 import com.mall.module.seckill.mapper.SeckillActivityMapper;
 import com.mall.module.seckill.mapper.SeckillItemMapper;
+import com.mall.module.seckill.service.SeckillService;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -37,15 +38,23 @@ public class AdminMarketingServiceImpl implements AdminMarketingService {
     private final SeckillItemMapper seckillItemMapper;
     private final ProductSkuMapper productSkuMapper;
     private final CouponMapper couponMapper;
+    private final SeckillService seckillService;
 
     public AdminMarketingServiceImpl(SeckillActivityMapper seckillActivityMapper,
                                      SeckillItemMapper seckillItemMapper,
                                      ProductSkuMapper productSkuMapper,
-                                     CouponMapper couponMapper) {
+                                     CouponMapper couponMapper,
+                                     SeckillService seckillService) {
         this.seckillActivityMapper = seckillActivityMapper;
         this.seckillItemMapper = seckillItemMapper;
         this.productSkuMapper = productSkuMapper;
         this.couponMapper = couponMapper;
+        this.seckillService = seckillService;
+    }
+
+    @Override
+    public void preheatSeckillItem(Long seckillItemId) {
+        seckillService.preheatStock(seckillItemId);
     }
 
     @Override

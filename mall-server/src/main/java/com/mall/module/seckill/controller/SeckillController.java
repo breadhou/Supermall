@@ -22,15 +22,11 @@ public class SeckillController {
     private SeckillService seckillService;
 
     /**
-     * 活动开始前预热 Redis 库存。
+     * 库存预热已移至平台管理端 {@code POST /api/admin/seckill/items/{itemId}/preheat}。
+     *
+     * <p>原路径 {@code /api/seckill/{itemId}/preheat} 只要求已登录，任何注册用户
+     * 都能把 Redis 库存重置为数据库快照——秒杀进行中调用会让可预占数量凭空增加。</p>
      */
-    @PostMapping("/{itemId}/preheat")
-    public Result<Void> preheatStock(@PathVariable Long itemId) {
-        seckillService.preheatStock(itemId);
-        Result<Void> result = Result.build();
-        result.success(null);
-        return result;
-    }
 
     /**
      * 获取当前用户专属的秒杀路径。

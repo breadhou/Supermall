@@ -29,13 +29,13 @@
         <CSVDataSet guiclass="TestBeanGUI" testclass="CSVDataSet" testname="预热账号" enabled="true">
           <stringProp name="delimiter">,</stringProp>
           <stringProp name="fileEncoding">UTF-8</stringProp>
-          <stringProp name="filename">${__P(setupUserFile,jmeter/setup-user.csv)}</stringProp>
+          <stringProp name="filename">${__P(adminCredentialFile,jmeter/admin-credentials.csv)}</stringProp>
           <boolProp name="ignoreFirstLine">true</boolProp>
           <boolProp name="quotedData">true</boolProp>
           <boolProp name="recycle">false</boolProp>
           <stringProp name="shareMode">shareMode.all</stringProp>
           <boolProp name="stopThread">true</boolProp>
-          <stringProp name="variableNames">setupUsername,setupPassword</stringProp>
+          <stringProp name="variableNames">adminUsername,adminPassword</stringProp>
         </CSVDataSet>
         <hashTree/>
         <ConfigTestElement guiclass="HttpDefaultsGui" testclass="ConfigTestElement" testname="HTTP 请求默认值" enabled="true">
@@ -57,7 +57,7 @@
         </HeaderManager>
         <hashTree/>
         <HTTPSamplerProxy guiclass="HttpTestSampleGui" testclass="HTTPSamplerProxy" testname="登录（预热账号）" enabled="true">
-          <stringProp name="HTTPSampler.path">/api/auth/login</stringProp>
+          <stringProp name="HTTPSampler.path">/api/admin/login</stringProp>
           <stringProp name="HTTPSampler.method">POST</stringProp>
           <boolProp name="HTTPSampler.follow_redirects">true</boolProp>
           <boolProp name="HTTPSampler.auto_redirects">false</boolProp>
@@ -68,7 +68,7 @@
             <collectionProp name="Arguments.arguments">
               <elementProp name="" elementType="HTTPArgument">
                 <boolProp name="HTTPArgument.always_encode">false</boolProp>
-                <stringProp name="Argument.value">{"username":"${setupUsername}","password":"${setupPassword}"}</stringProp>
+                <stringProp name="Argument.value">{"username":"${adminUsername}","password":"${adminPassword}"}</stringProp>
                 <stringProp name="Argument.metadata">=</stringProp>
                 <boolProp name="HTTPArgument.use_equals">true</boolProp>
                 <stringProp name="Argument.name"/>
@@ -88,7 +88,7 @@
           <hashTree/>
         </hashTree>
         <HTTPSamplerProxy guiclass="HttpTestSampleGui" testclass="HTTPSamplerProxy" testname="预热秒杀库存" enabled="true">
-          <stringProp name="HTTPSampler.path">/api/seckill/${__P(itemId,910000000000000006)}/preheat</stringProp>
+          <stringProp name="HTTPSampler.path">/api/admin/seckill/items/${__P(itemId,910000000000000006)}/preheat</stringProp>
           <stringProp name="HTTPSampler.method">POST</stringProp>
           <boolProp name="HTTPSampler.follow_redirects">true</boolProp>
           <boolProp name="HTTPSampler.auto_redirects">false</boolProp>

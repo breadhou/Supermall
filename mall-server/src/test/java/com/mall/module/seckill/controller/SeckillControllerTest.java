@@ -28,13 +28,7 @@ class SeckillControllerTest {
     private static final Long ITEM_ID = 2001L;
     private static final String PATH = "test-path";
 
-    @Test
-    void preheatStock_shouldReturnSuccessResult() {
-        Result<Void> result = seckillController.preheatStock(ITEM_ID);
-
-        assertSuccess(result);
-        verify(seckillService).preheatStock(ITEM_ID);
-    }
+    // 库存预热的控制器测试已随接口迁移至管理端，见 AdminMarketingController 相关测试
 
     @Test
     void getPath_shouldReturnPath() {

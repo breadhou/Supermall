@@ -273,14 +273,14 @@ supermall/
 
 ## 测试覆盖基线（2026-09-18 核实）
 
-**权威数字**：`mvn test` 共 **181 个测试，0 失败 / 0 错误 / 0 跳过**，32 个测试类。
+**权威数字**：`mvn test` 共 **183 个测试，0 失败 / 0 错误 / 0 跳过**，33 个测试类。
 
 | 模块 | 测试数 | 测试类 |
 |------|--------|--------|
 | mall-common | 5 | `SnowflakeIdUtilTest`(5) |
 | mall-security | 16 | `JwtAuthFilterTest`(4)、`JwtUtilTest`(8)、`MerchantJwtUtilTest`(4) |
 | mall-infra | 6 | `CouponStockRedisServiceTest`(2)、`RedisServiceTest`(4) |
-| mall-server | 154 | 27 个测试类 |
+| mall-server | 156 | 28 个测试类 |
 
 执行方式（本机 `mvn` 不在 PATH）：
 
@@ -490,11 +490,14 @@ MyBatis-Plus 配置了逻辑删除字段 `deleted`（`0`=未删除，`1`=已删�
 - 测试：`AdminAuthServiceImplTest`(3)。
 - **验证**：SUPER_ADMIN 登录通过；商家账号登录管理端 `90006`；商家 token / C 端 token / 无 token 打 `/api/admin/**` 均 403；禁用用户后其登录被拒、恢复后正常；新建活动经预热 + 倒计时验证**确实可跑**（Redis 500、快照正确）。
 
-### 已知未修问题
+### 已修复缺陷（2026-09-18，做 9.2 时发现）
 
-**`POST /api/seckill/{itemId}/preheat` 任何 C 端用户都能调用**（2026-09-18 做 9.2 时发现，属阶段六遗留）：
+**`POST /api/seckill/{itemId}/preheat` 任何 C 端用户都能调用**（阶段六遗留）：
 
-- 该接口挂在 C 端路径 `/api/seckill/**` 上，只要求已登录、不校验角色，作用却是把 Redis 库存**重置**为 `seckill_item.stock` 并重写快照。
+- 原接口挂在 C 端路径上，只要求已登录、不校验角色，作用却是把 Redis 库存**重置**为 `seckill_item.stock` 并重写快照。
 - **实证**：把某秒杀商品的 Redis 库存人为改成 42，用一个刚注册的普通账号调用 preheat，库存被重置回 500。
-- **风险**：秒杀进行中调用会重置库存计数器，而部分预占尚在 Redis 未落库，重置等于让可预占数量凭空增加——**超卖**路径；至少也能把已售罄的商品重新「上架」。注册接口开放，任何人满足前置条件。
-- **建议修法**：preheat 是运营动作，应移到 `/api/admin/**`（阶段九已建好该realm与 `ROLE_SUPER_ADMIN`）；若要支持商家自助预热，再按 `product.merchant_id` 做归属校验。修订后需回归秒杀集成验证——阶段六的压测脚本都依赖这个路径。
+- **风险**：秒杀进行中调用会让可预占数量凭空增加——**超卖**路径；至少也能把已售罄的商品重新「上架」。
+- **修法**：移到 `POST /api/admin/seckill/items/{itemId}/preheat`（`ROLE_SUPER_ADMIN`），C 端端点删除；`AdminMarketingService` 委托 `SeckillService.preheatStock`。
+- **验证**：普通用户打旧路径 `60002` 且库存不变；打新路径 403；管理员打新路径成功；无 token 403。
+- **副作用需知情**：旧路径不是 404，而是落到 `POST /api/seckill/{itemId}/{path}` 执行接口上被当作非法秒杀请求拒掉——结果无害但不够干净。
+- **压测脚本已同步**：三个 `.jmx` 改用管理员 token；新增 `jmeter/prepare-admin-token.ps1`（登录 `/api/admin/login` 并校验 `SUPER_ADMIN` 角色）产出 `admin-token.csv` 与 `admin-credentials.csv`。**跑秒杀压测前必须先执行它**，否则预热步骤会 403。`seckill-load-test.jmx` 中主线程的用户登录未动。
