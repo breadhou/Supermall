@@ -514,3 +514,34 @@ MyBatis-Plus 配置了逻辑删除字段 `deleted`（`0`=未删除，`1`=已删�
 - **验证**：普通用户打旧路径 `60002` 且库存不变；打新路径 403；管理员打新路径成功；无 token 403。
 - **副作用需知情**：旧路径不是 404，而是落到 `POST /api/seckill/{itemId}/{path}` 执行接口上被当作非法秒杀请求拒掉——结果无害但不够干净。
 - **压测脚本已同步**：三个 `.jmx` 改用管理员 token；新增 `jmeter/prepare-admin-token.ps1`（登录 `/api/admin/login` 并校验 `SUPER_ADMIN` 角色）产出 `admin-token.csv` 与 `admin-credentials.csv`。**跑秒杀压测前必须先执行它**，否则预热步骤会 403。`seckill-load-test.jmx` 中主线程的用户登录未动。
+
+---
+
+## 待办（2026-09-18 记录）
+
+### 1. 本店商品列表（`GET /api/merchant/products`）
+
+阶段九 9.1 按 `docs/implementation-plan.md` 未做。商家目前只能靠上架时返回的 ID 记住自己的商品，**无法找回在售商品的全貌**。成本很低，建议下一轮补齐。
+
+### 2. 把本地启动流程做成项目 skill
+
+**为什么值得做**：supermall 的启动已经复杂到需要固化了。
+
+- **三个必需环境变量**（`MERCHANT_JWT_SECRET`、`MALL_WORKER_ID`、`MALL_DATACENTER_ID`），缺任何一个都启动失败
+- **两套服务机制**：MySQL 是 Windows 服务，Redis/RabbitMQ 是 WSL 容器
+- **WSL 会在最后一条 `wsl.exe` 命令结束约 60 秒后关掉整个 VM**，测试期间必须保持一个 WSL 会话存活
+- 中文字段必须走 UTF-8 文件，直接 `curl -d` 会被 Git Bash 按 GBK 发出
+
+**现状**：`.claude/skills/` 不存在，每个新会话都要重读本节与「本地测试环境启动」再手工拼命令。
+
+**做法**：运行 `/run-skill-generator`。这正是 `run` skill 推荐的场景——「had to set env vars, patch config… recommend `/run-skill-generator` so that work gets captured as a project skill」。
+
+**紧迫性**：`D:\sourcecode\after-sales-agent` 的三份实现计划**都要求 supermall 处于运行状态**，启动摩擦会在每次执行计划时重复发生。
+
+---
+
+## 相关项目
+
+| 项目 | 位置 | 关系 |
+|---|---|---|
+| **after-sales-agent** | `D:\sourcecode\after-sales-agent` | 售后决策与执行 Agent，通过 **MCP** 调用本项目的能力，不直连数据库。设计与计划已完成，待执行 |
