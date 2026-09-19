@@ -91,7 +91,7 @@ class AfterSalesPolicyTest {
      */
     @Test
     void everyPolicyIsReachableThroughResolve() {
-        String[] statuses = {"PENDING", "PAID", "SHIPPED", "DELIVERED", "RECEIVED", "CANCELLED"};
+        String[] statuses = {"PENDING", "PAID", "SHIPPED", "DELIVERED", "RECEIVED", "REFUNDED", "CANCELLED"};
         long[] days = {-1, 0, 1, 7, 8, 30, 365};
 
         EnumSet<AfterSalesPolicy> reachable = EnumSet.noneOf(AfterSalesPolicy.class);
@@ -106,10 +106,11 @@ class AfterSalesPolicyTest {
 
         for (AfterSalesPolicy policy : AfterSalesPolicy.values()) {
             assertTrue(reachable.contains(policy),
-                    policy + " 永远不会被 resolve 返回：它被声明顺序靠前的兜底政策遮蔽了，"
-                            + "但它的条款文本仍会被索引进 RAG，造成判定与文本矛盾");
+                    policy + " 永远不会被 resolve 返回，有两种成因："
+                            + "要么它被声明顺序靠前的兜底政策遮蔽，"
+                            + "要么它只在网格外的状态/天数生效——"
+                            + "若属后者，把该取值补进上面的网格即可，调整常量顺序帮不上忙。"
+                            + "两种情况都会让它的条款文本被索引进 RAG，造成判定与文本矛盾");
         }
-        assertEquals(EnumSet.allOf(AfterSalesPolicy.class), reachable,
-                "可达集合必须与 values() 完全一致，多出来的常量即被遮蔽");
     }
 }
