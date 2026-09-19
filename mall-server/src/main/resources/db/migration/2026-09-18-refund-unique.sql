@@ -31,6 +31,12 @@
 --   prod 形态（有 uk、有 idx）      只删 idx        只生成 DROP KEY 子句
 --   已迁移（有 uk、无 idx）         无操作          @clauses 为空，执行 DO 0
 --   异常（无 uk、无 idx）           加 uk           只生成 ADD 子句
+--   同名但非唯一（uk 撞名、类型错） 重建为唯一      先 DROP 再 ADD 同名索引
+--
+-- 最后一行值得说明：只按索引名判断是不够的。若有人手工建了一个**非唯一**索引
+-- 却叫 uk_refund_order，只查名字会误判成「已经有了」，于是跳过 ADD 却仍删掉
+-- idx_order_id —— 脚本报成功，而 order_id 上其实一个唯一约束都没有，幂等保证
+-- 落空。所以这里连 non_unique 一起判断，撞名且类型不对时删掉重建。
 --
 -- 说明：DROP INDEX 在 MySQL 里不支持 IF EXISTS，所以下面用 information_schema
 -- 读出当前实际状态，再动态拼出需要执行的子句。
@@ -46,10 +52,19 @@
 
 USE mall;
 
+-- 唯一的 uk_refund_order（non_unique = 0 才是唯一索引）
 SET @has_uk := (SELECT COUNT(*) FROM information_schema.statistics
                 WHERE table_schema = DATABASE()
                   AND table_name   = 'refund'
-                  AND index_name   = 'uk_refund_order');
+                  AND index_name   = 'uk_refund_order'
+                  AND non_unique   = 0);
+
+-- 撞名但类型不对的非唯一索引（见上方矩阵最后一行）
+SET @uk_wrong_type := (SELECT COUNT(*) FROM information_schema.statistics
+                       WHERE table_schema = DATABASE()
+                         AND table_name   = 'refund'
+                         AND index_name   = 'uk_refund_order'
+                         AND non_unique   = 1);
 
 SET @has_old := (SELECT COUNT(*) FROM information_schema.statistics
                  WHERE table_schema = DATABASE()
@@ -57,9 +72,11 @@ SET @has_old := (SELECT COUNT(*) FROM information_schema.statistics
                    AND index_name   = 'idx_order_id');
 
 -- CONCAT_WS 会跳过 NULL，所以「不需要的子句」传 NULL 即可。
+-- 顺序要紧：同名索引必须先 DROP 再 ADD，否则 MySQL 报 1061 duplicate key name。
 SET @clauses := CONCAT_WS(', ',
-    IF(@has_uk  = 0, 'ADD UNIQUE KEY uk_refund_order (order_id)', NULL),
-    IF(@has_old = 1, 'DROP KEY idx_order_id',                     NULL));
+    IF(@uk_wrong_type = 1, 'DROP KEY uk_refund_order',                   NULL),
+    IF(@has_uk        = 0, 'ADD UNIQUE KEY uk_refund_order (order_id)',  NULL),
+    IF(@has_old       = 1, 'DROP KEY idx_order_id',                      NULL));
 
 -- 两个索引都已就位时 @clauses 为空串；DO 0 是合法的空操作语句。
 SET @stmt := IF(@clauses = '', 'DO 0', CONCAT('ALTER TABLE refund ', @clauses));
