@@ -27,6 +27,7 @@ import com.mall.module.user.mapper.AddressMapper;
 import com.mall.security.utils.UserContext;
 import org.springframework.beans.BeanUtils;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.dao.DuplicateKeyException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -283,7 +284,15 @@ public class OrderServiceImpl implements OrderService {
                 .setAmount(order.getTotalAmount())
                 .setStatus("PENDING");
 
-        refundMapper.insert(refund);
+        try {
+            refundMapper.insert(refund);
+        } catch (DuplicateKeyException exception) {
+            // refund.order_id 上有唯一索引 uk_refund_order（一单一退）。撞上它意味着
+            // 该订单已有退款记录——并发提交或调用方重试，都是业务事实而非系统故障。
+            // 不捕获的话会落到 GlobalExceptionHandler 的兜底分支，返回 -1 系统异常，
+            // 与真实故障无法区分，从而诱发无谓的重试与升级。
+            throw new BusinessException(ResultStatus.REFUND_ALREADY_EXISTS);
+        }
 
     }
 

@@ -29,6 +29,7 @@ import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.MockedStatic;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.dao.DuplicateKeyException;
 
 import java.math.BigDecimal;
 import java.util.List;
@@ -406,5 +407,22 @@ class OrderServiceImplTest {
 
         assertEquals(ResultStatus.ORDER_STATUS_ERROR, ex.getStatus());
         verify(refundMapper, never()).insert(any(Refund.class));
+    }
+
+    @Test
+    void requestRefund_shouldThrowBusinessError_whenRefundAlreadyExists() {
+        mockOrder.setStatus("PAID");
+        when(orderMapper.selectById(ORDER_ID)).thenReturn(mockOrder);
+        // Task 1 给 refund.order_id 加了唯一索引，重复申请会撞 uk_refund_order
+        when(refundMapper.insert(any(Refund.class)))
+                .thenThrow(new DuplicateKeyException("uk_refund_order"));
+
+        RefundDTO dto = new RefundDTO();
+        dto.setReason("重复提交");
+
+        BusinessException ex = assertThrows(BusinessException.class,
+                () -> orderService.requestRefund(ORDER_ID, dto));
+
+        assertEquals(ResultStatus.REFUND_ALREADY_EXISTS, ex.getStatus());
     }
 }
