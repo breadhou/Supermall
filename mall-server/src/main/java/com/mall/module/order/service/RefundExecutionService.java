@@ -17,7 +17,9 @@ public interface RefundExecutionService {
      *       不代表此刻的状态。</li>
      *   <li><b>此前已有退款记录，本次未重复执行</b>：{@code eligible=false}、
      *       {@code refundExists=true}，{@code refundableAmount} 为<b>该既有记录的金额</b>。
-     *       调用方据此判断「已经退过了」，<b>不要当成失败</b>。</li>
+     *       调用方据此判断「此前已有记录」，<b>不要当成失败</b>。
+     *       <b>注意是「已有记录」而不是「已经退过了」</b>——记录可能仍在处理中、钱未必已退，
+     *       具体看下一段的 {@code reason} 文案。</li>
      * </ul>
      *
      * <p>第二种形态的 {@code reason} 文案按<b>既有行的状态</b>区分，两者不可混为一谈：
