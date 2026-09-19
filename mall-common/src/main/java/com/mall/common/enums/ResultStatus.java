@@ -24,6 +24,9 @@ public enum ResultStatus {
     // ==================== 订单模块 50000 ====================
     ORDER_NOT_EXIST(50000, "订单不存在"),
     ORDER_STATUS_ERROR(50001, "订单状态不允许此操作"),
+    ORDER_NOT_REFUNDABLE(50002, "该订单当前不可退款"),
+    REFUND_ALREADY_EXISTS(50003, "该订单已有退款记录"),
+    REFUND_NOT_EXECUTABLE(50004, "退款记录状态不允许执行"),
 
     // ==================== 秒杀模块 60000 ====================
     SECKILL_END(60000, "商品已经秒杀完毕"),
