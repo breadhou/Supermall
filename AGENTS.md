@@ -365,7 +365,9 @@ supermall/
 
 执行 `mall-server/src/main/resources/db/init.sql` 初始化全部 **19 张表**。数据库名为 `mall`，默认连接 `localhost:3306`，账号为 `root`，密码为 `123456`。
 
-> 若数据库早于 `init.sql` 的索引变更建立，`user_coupon`、`payment_record`、`logistics` 上的唯一索引会缺失，导致 `CouponServiceImpl.receiveCoupon` 中依赖 `DataIntegrityViolationException` 的并发幂等分支失效。核对方式见「测试覆盖基线」同级的索引检查说明；修复时重建库或手工 `ALTER TABLE` 补齐。
+> 若数据库早于 `init.sql` 的索引变更建立，`user_coupon`、`payment_record`、`logistics`、`refund` 上的唯一索引会缺失。`CouponServiceImpl.receiveCoupon` 中依赖 `DataIntegrityViolationException` 的并发幂等分支会失效；`refund` 的 `uk_refund_order` 缺失则**退款幂等静默失效**——Agent 的一次重试就是一笔重复退款，而所有测试都 mock 了 `RefundMapper`，CI 永远发现不了。核对：
+> `SELECT table_name, index_name, non_unique FROM information_schema.statistics WHERE table_schema='mall' AND table_name IN ('user_coupon','payment_record','logistics','refund');`
+> `non_unique` 必须为 0。`refund` 另需确认是 `(order_id)` 上的**单列**唯一索引——复合索引 `(order_id, status)` 挡不住一单多退。修复时重建库或手工 `ALTER TABLE` 补齐。
 
 MyBatis-Plus 配置了逻辑删除字段 `deleted`（`0`=未删除，`1`=已删除），并启用了下划线到驼峰的自动转换。
 
