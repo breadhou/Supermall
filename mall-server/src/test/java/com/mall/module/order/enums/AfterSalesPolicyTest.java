@@ -2,8 +2,11 @@ package com.mall.module.order.enums;
 
 import org.junit.jupiter.api.Test;
 
+import java.util.EnumSet;
+
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class AfterSalesPolicyTest {
@@ -59,9 +62,54 @@ class AfterSalesPolicyTest {
     }
 
     @Test
+    void resolve_shouldHonorSevenDayBoundary() {
+        // Task 4 调用的是 resolve 而不是 appliesTo，边界必须在这一层也锁住
+        assertEquals(AfterSalesPolicy.SEVEN_DAY_NO_REASON,
+                AfterSalesPolicy.resolve("RECEIVED", 7));
+        assertEquals(AfterSalesPolicy.QUALITY_ISSUE,
+                AfterSalesPolicy.resolve("RECEIVED", 8));
+    }
+
+    @Test
     void resolve_shouldReturnNullWhenNothingApplies() {
-        assertEquals(null, AfterSalesPolicy.resolve("PAID", 1));
-        assertEquals(null, AfterSalesPolicy.resolve("PENDING", 1));
-        assertEquals(null, AfterSalesPolicy.resolve("CANCELLED", 1));
+        assertNull(AfterSalesPolicy.resolve("PAID", 1));
+        assertNull(AfterSalesPolicy.resolve("PENDING", 1));
+        assertNull(AfterSalesPolicy.resolve("CANCELLED", 1));
+    }
+
+    /**
+     * 每个常量都必须能被 {@link AfterSalesPolicy#resolve} 返回。
+     *
+     * <p>被遮蔽的常量比死代码更危险：Task 7 会把 {@code values()} 全量索引进 RAG，
+     * 它的条款文本照样能被检索到，于是「判定永不命中、文本却说适用」。
+     * 兜底项 {@link AfterSalesPolicy#QUALITY_ISSUE} 匹配所有 RECEIVED，
+     * 任何追加在其后的 RECEIVED 政策都会被它吃掉——这个测试就是拦这件事。</p>
+     *
+     * <p>网格搜索是「存在性」判定：常量只要在任一格被返回就算可达，所以不会漏报。
+     * 反向的误报是可能的——新增政策若只在网格外的状态或天数生效，会被当成遮蔽，
+     * 届时把那个状态或天数补进下面的网格即可。宁可误红，也不要静默放行。</p>
+     */
+    @Test
+    void everyPolicyIsReachableThroughResolve() {
+        String[] statuses = {"PENDING", "PAID", "SHIPPED", "DELIVERED", "RECEIVED", "CANCELLED"};
+        long[] days = {-1, 0, 1, 7, 8, 30, 365};
+
+        EnumSet<AfterSalesPolicy> reachable = EnumSet.noneOf(AfterSalesPolicy.class);
+        for (String status : statuses) {
+            for (long day : days) {
+                AfterSalesPolicy hit = AfterSalesPolicy.resolve(status, day);
+                if (hit != null) {
+                    reachable.add(hit);
+                }
+            }
+        }
+
+        for (AfterSalesPolicy policy : AfterSalesPolicy.values()) {
+            assertTrue(reachable.contains(policy),
+                    policy + " 永远不会被 resolve 返回：它被声明顺序靠前的兜底政策遮蔽了，"
+                            + "但它的条款文本仍会被索引进 RAG，造成判定与文本矛盾");
+        }
+        assertEquals(EnumSet.allOf(AfterSalesPolicy.class), reachable,
+                "可达集合必须与 values() 完全一致，多出来的常量即被遮蔽");
     }
 }
