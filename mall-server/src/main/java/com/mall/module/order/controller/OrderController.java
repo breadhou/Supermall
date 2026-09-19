@@ -87,11 +87,14 @@ public class OrderController {
      * <ul>
      *   <li>{@code eligible=true}：它是<b>可退</b>金额，此刻确实可退；</li>
      *   <li>{@code refundExists=true}（已有退款记录，此时 {@code eligible=false}）：
-     *       <b>这个数字不代表现在还能退</b>——它对应那条既有记录（当前只支持整单退款，
-     *       故与订单实付金额同额）。<b>既有行还是 {@code PENDING} 时，这笔钱还没退</b>，
+     *       <b>这个数字不代表现在还能退</b>——它仍是订单实付金额（当前只支持整单退款，
+     *       故与那条既有记录的金额相同）。<b>既有行还是 {@code PENDING} 时，这笔钱还没退</b>，
      *       别读成「已退」；</li>
-     *   <li>两者皆为 {@code false}（政策不适用／超期）：<b>这个数字更不是承诺</b>——
-     *       字段仍填了订单实付金额，但该订单当前不可退。</li>
+     *   <li>两者皆为 {@code false}（订单状态不符合任何售后政策）：<b>这个数字更不是承诺</b>——
+     *       字段仍填了订单实付金额，但该订单当前不可退。
+     *       <b>别把这一支读成「超期」</b>：签收超过 7 天**不会**落到这里——
+     *       {@code QUALITY_ISSUE} 对 {@code RECEIVED} 订单无期限兜底，
+     *       天数只决定命中哪条政策，不决定有没有政策（见 {@code AfterSalesPolicy}）。</li>
      * </ul>
      *
      * <p>⚠️ <b>本端点区分不了既有记录是「已完成」还是「仍在处理中」</b>——
@@ -111,7 +114,7 @@ public class OrderController {
      * 金额由服务端决定，请求体只携带原因。
      *
      * <p><b>两种响应形态，调用方必须都能正确处理</b>（与
-     * {@link com.mall.module.order.service.RefundExecutionService#execute} 的契约一致）：</p>
+     * {@link RefundExecutionService#execute} 的契约一致）：</p>
      *
      * <ul>
      *   <li><b>本次执行了退款</b>：{@code eligible=true}、{@code reason=null}，
