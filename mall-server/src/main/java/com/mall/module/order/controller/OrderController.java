@@ -1,6 +1,7 @@
 package com.mall.module.order.controller;
 
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
+import com.mall.common.enums.ResultStatus;
 import com.mall.common.result.Result;
 import com.mall.module.order.entity.dto.CreateOrderDTO;
 import com.mall.module.order.entity.dto.OrderPageDTO;
@@ -13,11 +14,14 @@ import com.mall.module.order.service.OrderService;
 import com.mall.module.order.service.RefundEligibilityService;
 import com.mall.module.order.service.RefundExecutionService;
 import jakarta.validation.Valid;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.*;
 
 @RestController
 @RequestMapping("/api/orders")
+@Slf4j
 public class OrderController {
 
     @Autowired
@@ -118,9 +122,13 @@ public class OrderController {
      *
      * <ul>
      *   <li><b>本次执行了退款</b>：{@code eligible=true}、{@code reason=null}，
-     *       {@code refundableAmount} 为本次退款金额，订单已推进到 {@code REFUNDED}；</li>
+     *       {@code refundableAmount} 为本次退款金额，订单已推进到 {@code REFUNDED}；
+     *       此时 {@code refundExists=false} 说的是<b>本次调用之前</b>没有既有退款记录——
+     *       它是写前的事实，<b>不代表此刻</b>（这一刻刚写入了一条）；
+     *       本形态还会带上 {@code policyCode} / {@code policyTitle}；形态二这两项为 {@code null}。</li>
      *   <li><b>此前已有退款记录、本次未重复执行</b>：{@code eligible=false}、
-     *       {@code refundExists=true}。<b>这不是失败</b>，
+     *       {@code refundExists=true}，{@code refundableAmount} 为<b>该既有记录的金额</b>
+     *       （取值来源与资格查询不同：那边取订单实付金额，当前两者同值）。<b>这不是失败</b>，
      *       不要读成「退款没成功」而重试或升级。</li>
      * </ul>
      *
@@ -143,5 +151,23 @@ public class OrderController {
         Result<RefundEligibilityVO> result = Result.build();
         result.success(refundExecutionService.execute(id, dto.getReason()));
         return result;
+    }
+
+    /**
+     * 请求体校验失败的收口。
+     *
+     * <p>仓库级的 {@code GlobalExceptionHandler} 没有处理 {@code MethodArgumentNotValidException}
+     * （只有 NPE / BusinessException / 405 / 兜底 Exception），校验失败会落进兜底分支，
+     * 返回 {@code -1 系统异常}——而 {@code -1} 在 Agent 眼里等于「售后系统故障」，
+     * 会诱发重试与升级。这与 K-6 修 {@code DuplicateKeyException} 是同一论证。</p>
+     *
+     * <p><b>刻意只在本控制器内收口，不改成全局</b>：本次任务的改动范围是售后端点，
+     * 全局改动会让提交范围与任务范围脱钩。仓库级的缺口仍在（其余用 {@code @Valid} 的文件照旧返回 -1），
+     * 已记为 K-31。</p>
+     */
+    @ExceptionHandler(MethodArgumentNotValidException.class)
+    public Result<Void> handleValidationFailure(MethodArgumentNotValidException e) {
+        log.warn("param_invalid: {}", e.getMessage());
+        return Result.fail(ResultStatus.PARAM_ERROR);
     }
 }
