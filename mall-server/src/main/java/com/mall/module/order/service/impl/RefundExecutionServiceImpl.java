@@ -94,9 +94,11 @@ public class RefundExecutionServiceImpl implements RefundExecutionService {
                 // 能撞上 uk_refund_order 就说明那行存在，读不到说明约束不是它挡的，别吞异常。
                 throw e;
             }
-            // 注意：这里**不能**吞掉「订单状态没推进」这件事。赢家事务会推进它；
-            // 本事务只是没有写入成功，正常返回即提交，而提交一个什么都没写的
-            // 事务等于无操作——订单状态由赢家负责。
+            // 注意：这里**不能**吞掉「订单状态没推进」这件事。但「谁推进」取决于赢家是谁：
+            // 赢家若是本服务，订单状态已由它推进到 REFUNDED；赢家若是旧端点
+            // （POST /api/orders/{id}/refund），它只落一行 PENDING，**本就不该**推进订单状态。
+            // 两种情况都不需要本事务补写——本事务只是没有写入成功，正常返回即提交，
+            // 而提交一个什么都没写的事务等于无操作。
             return idempotentResult(orderId, winner);
         }
 

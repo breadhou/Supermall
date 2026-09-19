@@ -158,7 +158,8 @@ class RefundExecutionServiceImplTest {
     @Test
     void execute_shouldTranslateDuplicateKeyIntoIdempotentResult() {
         givenEligible();
-        Refund winner = new Refund().setId(1L).setOrderId(ORDER_ID).setStatus("REFUNDED");
+        Refund winner = new Refund().setId(1L).setOrderId(ORDER_ID).setStatus("REFUNDED")
+                .setAmount(new BigDecimal("199.99"));
         // 上方复查读不到：能进 catch 就说明本事务的 read view 早于赢家提交，
         // 普通 SELECT 复用旧快照，必然读到 null（这不只是「模拟」，而是必现）
         when(refundMapper.selectOne(any())).thenReturn(null);
@@ -174,6 +175,29 @@ class RefundExecutionServiceImplTest {
         // 行为断言钉不住这次修复（读被 stub 掉了，无论走锁定读还是普通 SELECT 都能返回 winner），
         // 只有交互断言能钉住：catch 里必须走锁定读，普通 SELECT 在旧 read view 下必然读不到赢家。
         verify(refundMapper).selectByOrderIdForUpdate(ORDER_ID);
+        // 下面两条把「用的是锁定读的**结果**」也钉住（2026-09-19 补）。
+        // 只有上面那条 verify 是不够的：把返回值丢掉、改用硬编码的 Refund 构造结论，
+        // 8/8 照样全绿——**变异测试实测确认过这个缺口**，这两条才把它堵上。
+        assertEquals(new BigDecimal("199.99"), vo.getRefundableAmount());
+        assertEquals("该订单已完成退款", vo.getReason());
+    }
+
+    /**
+     * catch 的另一条出口：撞上的**不是**这条唯一索引时，必须原样抛出，不得吞成业务结论。
+     *
+     * <p>2026-09-19 补。catch 有两条出口，上面那个用例守的是「翻译成业务结论」，
+     * 本用例守的是「翻译不了就别把真故障说成业务结论」——K-21 第 2 条记的正是这个家族
+     * （撞主键被误报成「已有退款记录」）。</p>
+     */
+    @Test
+    void execute_shouldRethrowWhenTheDuplicateIsNotTheOrderUniqueIndex() {
+        givenEligible();
+        when(refundMapper.selectOne(any())).thenReturn(null);
+        when(refundMapper.selectByOrderIdForUpdate(ORDER_ID)).thenReturn(null);
+        when(refundMapper.insert(any(Refund.class)))
+                .thenThrow(new DuplicateKeyException("PRIMARY"));
+
+        assertThrows(DuplicateKeyException.class, () -> service.execute(ORDER_ID, "并发重试"));
     }
 
     @Test
