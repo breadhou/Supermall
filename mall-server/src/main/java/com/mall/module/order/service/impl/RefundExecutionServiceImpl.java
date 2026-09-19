@@ -86,6 +86,7 @@ public class RefundExecutionServiceImpl implements RefundExecutionService {
             // 上方的复查就已经看见该行并提前返回，根本进不来）。而普通 SELECT 在本事务内
             // 复用那个旧 read view，于是必然读到 null、必然把 DuplicateKeyException 漏成
             // -1 系统异常——正是本分支要避免的结果。锁定读读的是最新已提交版本，不受快照约束。
+            // （2026-09-19 修订，见 Task 5 修订说明）
             //
             // 不会死锁：两个事务都先锁订单行，同一订单的并发请求已在订单行上串行化。
             Refund winner = refundMapper.selectByOrderIdForUpdate(orderId);
@@ -94,7 +95,8 @@ public class RefundExecutionServiceImpl implements RefundExecutionService {
                 throw e;
             }
             // 注意：这里**不能**吞掉「订单状态没推进」这件事。赢家事务会推进它；
-            // 本事务回滚后，订单状态由赢家负责。
+            // 本事务只是没有写入成功，正常返回即提交，而提交一个什么都没写的
+            // 事务等于无操作——订单状态由赢家负责。
             return idempotentResult(orderId, winner);
         }
 
