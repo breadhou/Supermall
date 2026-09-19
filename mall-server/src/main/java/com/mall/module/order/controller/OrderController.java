@@ -92,7 +92,7 @@ public class OrderController {
      *       别读成「已退」；</li>
      *   <li>两者皆为 {@code false}（订单状态不符合任何售后政策）：<b>这个数字更不是承诺</b>——
      *       字段仍填了订单实付金额，但该订单当前不可退。
-     *       <b>别把这一支读成「超期」</b>：签收超过 7 天**不会**落到这里——
+     *       <b>别把这一支读成「超期」</b>：签收超过 7 天<b>不会</b>落到这里——
      *       {@code QUALITY_ISSUE} 对 {@code RECEIVED} 订单无期限兜底，
      *       天数只决定命中哪条政策，不决定有没有政策（见 {@code AfterSalesPolicy}）。</li>
      * </ul>
