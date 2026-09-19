@@ -77,15 +77,20 @@ public class RefundExecutionServiceImpl implements RefundExecutionService {
                     .setStatus(REFUNDED)
                     .setCreatedAt(LocalDateTime.now()));
         } catch (DuplicateKeyException e) {
-            // 并发重试的兜底：另一个事务抢先插入了同一订单的退款行，而上方的复查
-            // 读到了过期快照（见方法内注释）。唯一索引已经替我们挡住了重复退款，
-            // 这里只需把它翻译成业务语义。
+            // 并发重试的兜底：另一个事务抢先插入了同一订单的退款行，唯一索引已经
+            // 替我们挡住了重复退款，这里只需把它翻译成业务语义。
             // 与 OrderServiceImpl.requestRefund 的写法同源（Task 3 已批准落地）。
-            Refund winner = refundMapper.selectOne(
-                    new LambdaQueryWrapper<Refund>().eq(Refund::getOrderId, orderId));
+            //
+            // ⚠️ 这里**必须**用锁定读，普通 SELECT 一定读不到赢家——两者是同一个原因的两面：
+            // 能进到这个 catch，恰恰说明本事务的 read view 早于赢家提交（若 read view 更晚，
+            // 上方的复查就已经看见该行并提前返回，根本进不来）。而普通 SELECT 在本事务内
+            // 复用那个旧 read view，于是必然读到 null、必然把 DuplicateKeyException 漏成
+            // -1 系统异常——正是本分支要避免的结果。锁定读读的是最新已提交版本，不受快照约束。
+            //
+            // 不会死锁：两个事务都先锁订单行，同一订单的并发请求已在订单行上串行化。
+            Refund winner = refundMapper.selectByOrderIdForUpdate(orderId);
             if (winner == null) {
-                // 理论上不可达：能撞上 uk_refund_order 就说明那行存在。
-                // 真发生了说明约束不是它挡的，别吞异常。
+                // 能撞上 uk_refund_order 就说明那行存在，读不到说明约束不是它挡的，别吞异常。
                 throw e;
             }
             // 注意：这里**不能**吞掉「订单状态没推进」这件事。赢家事务会推进它；

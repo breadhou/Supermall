@@ -159,9 +159,11 @@ class RefundExecutionServiceImplTest {
     void execute_shouldTranslateDuplicateKeyIntoIdempotentResult() {
         givenEligible();
         Refund winner = new Refund().setId(1L).setOrderId(ORDER_ID).setStatus("REFUNDED");
-        // 第一次复查读不到（模拟 REPEATABLE READ 下的过期快照），
-        // catch 里的第二次查询读得到（新语句，新快照）
-        when(refundMapper.selectOne(any())).thenReturn(null, winner);
+        // 上方复查读不到：能进 catch 就说明本事务的 read view 早于赢家提交，
+        // 普通 SELECT 复用旧快照，必然读到 null（这不只是「模拟」，而是必现）
+        when(refundMapper.selectOne(any())).thenReturn(null);
+        // catch 里的锁定读读最新已提交版本，不受本事务快照约束
+        when(refundMapper.selectByOrderIdForUpdate(ORDER_ID)).thenReturn(winner);
         when(refundMapper.insert(any(Refund.class)))
                 .thenThrow(new DuplicateKeyException("uk_refund_order"));
 
@@ -169,6 +171,9 @@ class RefundExecutionServiceImplTest {
 
         assertTrue(vo.isRefundExists());
         assertFalse(vo.isEligible());
+        // 行为断言钉不住这次修复（读被 stub 掉了，无论走锁定读还是普通 SELECT 都能返回 winner），
+        // 只有交互断言能钉住：catch 里必须走锁定读，普通 SELECT 在旧 read view 下必然读不到赢家。
+        verify(refundMapper).selectByOrderIdForUpdate(ORDER_ID);
     }
 
     @Test
