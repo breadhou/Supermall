@@ -59,8 +59,9 @@ public class RefundEligibilityServiceImpl implements RefundEligibilityService {
     }
 
     /**
-     * 距签收天数。当前订单表没有签收时间字段，用创建时间近似——
-     * 这是本阶段的已知简化，签收时间落地后应替换。
+     * 当前订单表没有签收时间字段，用订单创建时间近似起点。
+     * {@link Duration#toDays()} 返回完整经过的 24 小时天数，不足 24 小时的余数会被截断；
+     * 签收时间落地后应替换这个近似口径。
      */
     private long daysSince(LocalDateTime from) {
         if (from == null) {

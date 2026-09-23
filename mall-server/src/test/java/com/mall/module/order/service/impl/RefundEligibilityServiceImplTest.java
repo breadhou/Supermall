@@ -54,12 +54,16 @@ class RefundEligibilityServiceImplTest {
     }
 
     private Order order(String status, int daysAgo) {
+        return order(status, LocalDateTime.now().minusDays(daysAgo));
+    }
+
+    private Order order(String status, LocalDateTime createdAt) {
         return new Order()
                 .setId(ORDER_ID)
                 .setUserId(USER_ID)
                 .setStatus(status)
                 .setTotalAmount(new BigDecimal("199.99"))
-                .setCreatedAt(LocalDateTime.now().minusDays(daysAgo));
+                .setCreatedAt(createdAt);
     }
 
     @Test
@@ -73,6 +77,38 @@ class RefundEligibilityServiceImplTest {
         assertEquals(AfterSalesPolicy.SEVEN_DAY_NO_REASON.name(), vo.getPolicyCode());
         assertEquals(new BigDecimal("199.99"), vo.getRefundableAmount());
         assertFalse(vo.isRefundExists());
+    }
+
+    @Test
+    void sevenDaysAndTwentyThreeHours_shouldStayInFirstPolicyBecauseOnlyCompleteDaysCount() {
+        when(orderMapper.selectById(ORDER_ID)).thenReturn(
+                order("RECEIVED", LocalDateTime.now().minusDays(7).minusHours(23)));
+        when(refundMapper.selectOne(any())).thenReturn(null);
+
+        RefundEligibilityVO vo = service.check(ORDER_ID);
+
+        assertTrue(vo.isEligible());
+        assertEquals(AfterSalesPolicy.SEVEN_DAY_NO_REASON.name(), vo.getPolicyCode());
+        assertEquals("已签收（完整天数不超过 7）整单退款", vo.getPolicyTitle());
+        assertEquals("订单状态为已签收时，系统从订单创建时间起每满 24 小时计 1 天，不足 24 小时的余数不计；"
+                        + "计数不超过 7 天可申请整单退款，退款执行后立即完成。",
+                AfterSalesPolicy.SEVEN_DAY_NO_REASON.getClauseText());
+    }
+
+    @Test
+    void eightCompleteDays_shouldMoveToReceivedFallbackPolicy() {
+        when(orderMapper.selectById(ORDER_ID)).thenReturn(
+                order("RECEIVED", LocalDateTime.now().minusDays(8)));
+        when(refundMapper.selectOne(any())).thenReturn(null);
+
+        RefundEligibilityVO vo = service.check(ORDER_ID);
+
+        assertTrue(vo.isEligible());
+        assertEquals(AfterSalesPolicy.QUALITY_ISSUE.name(), vo.getPolicyCode());
+        assertEquals("已签收（完整天数超过 7）整单退款", vo.getPolicyTitle());
+        assertEquals("订单状态为已签收时，系统从订单创建时间起每满 24 小时计 1 天，不足 24 小时的余数不计；"
+                        + "计数超过 7 天仍可申请整单退款，退款执行后立即完成。",
+                AfterSalesPolicy.QUALITY_ISSUE.getClauseText());
     }
 
     @Test

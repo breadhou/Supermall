@@ -2,11 +2,13 @@ package com.mall.module.order.enums;
 
 import org.junit.jupiter.api.Test;
 
+import java.util.Arrays;
 import java.util.EnumSet;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class AfterSalesPolicyTest {
@@ -18,6 +20,51 @@ class AfterSalesPolicyTest {
                     policy + " 缺少条款文本，RAG 将无据可依");
             assertFalse(policy.getTitle().isBlank(), policy + " 缺少标题");
         }
+    }
+
+    @Test
+    void sevenDayPolicy_shouldDescribeItsReachableWindowAndImmediateWholeOrderRefund() {
+        AfterSalesPolicy policy = AfterSalesPolicy.SEVEN_DAY_NO_REASON;
+
+        assertSame(policy, AfterSalesPolicy.resolve("RECEIVED", 7));
+        assertEquals("已签收（完整天数不超过 7）整单退款", policy.getTitle());
+        assertEquals("订单状态为已签收时，系统从订单创建时间起每满 24 小时计 1 天，不足 24 小时的余数不计；"
+                        + "计数不超过 7 天可申请整单退款，退款执行后立即完成。",
+                policy.getClauseText());
+    }
+
+    @Test
+    void shippedPolicy_shouldDescribeBothReachableStatusesAndImmediateWholeOrderRefund() {
+        AfterSalesPolicy policy = AfterSalesPolicy.SHIPPED_NOT_RECEIVED;
+
+        assertSame(policy, AfterSalesPolicy.resolve("SHIPPED", 0));
+        assertSame(policy, AfterSalesPolicy.resolve("DELIVERED", 0));
+        assertEquals("已发货或已送达整单退款", policy.getTitle());
+        assertEquals("订单状态为已发货或已送达时，可申请整单退款；退款执行后立即完成。",
+                policy.getClauseText());
+    }
+
+    @Test
+    void receivedFallbackPolicy_shouldDescribeItsReachableWindowWithoutReasonOrEvidenceChecks() {
+        AfterSalesPolicy policy = AfterSalesPolicy.QUALITY_ISSUE;
+
+        assertSame(policy, AfterSalesPolicy.resolve("RECEIVED", 8));
+        assertEquals("已签收（完整天数超过 7）整单退款", policy.getTitle());
+        assertEquals("订单状态为已签收时，系统从订单创建时间起每满 24 小时计 1 天，不足 24 小时的余数不计；"
+                        + "计数超过 7 天仍可申请整单退款，退款执行后立即完成。",
+                policy.getClauseText());
+    }
+
+    @Test
+    void policyCatalog_shouldNotClaimUnsupportedProductReturnOrEvidenceRequirements() {
+        String catalogText = Arrays.stream(AfterSalesPolicy.values())
+                .map(policy -> policy.getTitle() + policy.getClauseText())
+                .collect(java.util.stream.Collectors.joining("\n"));
+
+        assertFalse(catalogText.contains("未使用"));
+        assertFalse(catalogText.contains("二次销售"));
+        assertFalse(catalogText.contains("有效凭证"));
+        assertFalse(catalogText.contains("货物退回后"));
     }
 
     @Test
