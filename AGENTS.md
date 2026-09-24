@@ -86,9 +86,9 @@ java -jar mall-server/target/mall-server-1.0.0.jar --server.port=8081 --spring.p
 
 `loadtest` profile 仅覆盖 `mall.seckill.path-ttl-seconds=900`，其余继承主配置。启动约需 6 秒，日志出现 `Started MallApplication` 即为就绪。
 
-### 测试数据现状（2026-09-18 清理后）
+### 测试数据清理快照（2026-09-18）
 
-**数据库当前只保留商品目录，业务数据已清空。** 2026-09-18 为准备阶段九做了一次清理：`init.sql` 只建表、不含任何 INSERT，因此库里**所有**数据原本都是测试期间手工造的，不存在需要保护的真实数据。
+这是 2026-09-18 为准备阶段九做的清理快照，**不是对当前数据库状态的声明**。当日 `init.sql` 只建表、不含任何 INSERT，因此库里业务数据原本都是测试期间手工造的，不存在需要保护的真实数据。
 
 清理方式：先用 `mysqldump` 把待删表整体备份到仓库外的系统临时目录（`mall-business-backup-<时间戳>.sql`，25 KB），再执行删除。
 
@@ -122,9 +122,8 @@ java -jar mall-server/target/mall-server-1.0.0.jar --server.port=8081 --spring.p
 supermall/
 ├── pom.xml                  # 父 POM：Spring Boot 3.4.4 parent + 版本/模块管理
 ├── mall-common/             # 公共模块：Result<T>、BusinessException、ResultStatus、雪花 ID
-├── mall-security/           # 安全模块：JWT 生成/校验、Spring Security 无状态配置、UserContext
-│                            #   另有商家端独立一套：MerchantJwtUtil、MerchantContext、
-│                            #   MerchantAuthFilter、MerchantSecurityConfig（@Order(1)）
+├── mall-security/           # JWT、三条 Spring Security 无状态过滤器链、UserContext
+│                            #   C 端默认链；商家 @Order(1)；管理端 @Order(2)
 ├── mall-infra/              # 基础设施：Redis、分布式锁、KeyPrefix 体系、RabbitMQ 队列声明
 └── mall-server/             # 主服务：启动类 + 所有业务模块（按 module/<domain> 分包）
     └── src/main/
@@ -168,6 +167,12 @@ supermall/
 
 无需认证的白名单路径：`/api/auth/**`、`/doc.html`、`/webjars/**`、`/v3/api-docs/**`、`/swagger-ui/**`。
 
+### 三条安全过滤器链
+
+- C 端 `SecurityConfig` 没有 `@Order`，使用默认的最低优先级，处理未被更具体链匹配的路径。
+- 商家端 `MerchantSecurityConfig` 是 `@Order(1)`，以 `securityMatcher("/api/merchant/**")` 先匹配；管理端 `AdminSecurityConfig` 是 `@Order(2)`，匹配 `/api/admin/**`。Spring Security 只使用第一条匹配链，因此这两类路径不经过 C 端过滤器。
+- 商家端和管理端共用 `MerchantJwtUtil` 的签名密钥；C 端 `JwtUtil` 使用另一把密钥。共享签名只覆盖两个内部后台，权限仍由各自角色控制。
+
 ### Redis Key 命名规范
 
 使用 `KeyPrefix` 接口体系，前缀格式为 `mall:<domain>:<purpose>:`。秒杀热路径的 key 必须让同一 `itemId` 落在同一个 Redis Cluster hash slot：
@@ -181,7 +186,7 @@ supermall/
 - `mall:seckill:{itemId}:pending:{messageId}` 与 `pending:index`：消息待确认/处理中状态及索引。
 - `mall:coupon:{couponId}:stock`：优惠券领取库存计数，使用 couponId hash tag。
 
-已有 KeyPrefix 实现：`Userkey`、`GoodsKey`、`MiaoshaKey`、`MiaoShaUserKey`、`OrderKey`，位于 `mall-infra/redis/`；秒杀完整 key 由 `SeckillKey` 生成，旧前缀仅为源码兼容保留。
+已有 KeyPrefix 实现：`Userkey`、`GoodsKey`、`MiaoshaKey`、`MiaoShaUserKey`、`OrderKey`、`CouponKey`，位于 `mall-infra/redis/`；`CouponStockRedisService` 通过 `CouponKey.stockKey(couponId)` 初始化、扣减和回滚优惠券库存。秒杀完整 key 由 `SeckillKey` 生成，旧前缀仅为源码兼容保留。
 
 ### RabbitMQ 秒杀消息流
 
@@ -215,16 +220,16 @@ supermall/
 | 阶段八 | 支付物流 | payment_record、logistics | 已完成，真实集成验证 2026-09-18 通过（发货/送达无 HTTP 出口，待阶段九） |
 | 阶段九 | 商家后台 | merchant、admin_user | 已完成（9.1 商家端 + 9.2 管理后台，均通过真实环境验证） |
 
-## 测试覆盖基线（2026-09-18 核实）
+## 测试报告基线（2026-09-23）
 
-**权威数字**：`mvn test` 共 **188 个测试，0 失败 / 0 错误 / 0 跳过**，33 个测试类。
+现有 Surefire 报告汇总为 **228 个测试，38 个测试类，0 失败 / 0 错误 / 0 跳过**。这是 2026-09-23 的报告快照，**不是本次会话重新运行 `mvn test` 的结果**。
 
 | 模块 | 测试数 | 测试类 |
 |------|--------|--------|
-| mall-common | 5 | `SnowflakeIdUtilTest`(5) |
-| mall-security | 16 | `JwtAuthFilterTest`(4)、`JwtUtilTest`(8)、`MerchantJwtUtilTest`(4) |
-| mall-infra | 6 | `CouponStockRedisServiceTest`(2)、`RedisServiceTest`(4) |
-| mall-server | 156 | 28 个测试类 |
+| mall-common | 10 | 1 |
+| mall-security | 16 | 3 |
+| mall-infra | 6 | 2 |
+| mall-server | 196 | 32 |
 
 执行方式（本机 `mvn` 不在 PATH）：
 
@@ -258,7 +263,7 @@ supermall/
 
 ## 数据库
 
-执行 `mall-server/src/main/resources/db/init.sql` 初始化全部 **19 张表**。数据库名为 `mall`，默认连接 `localhost:3306`，账号为 `root`，密码为 `123456`。
+执行 `mall-server/src/main/resources/db/init.sql` 初始化全部 **19 张表**。`application.yml` 含本地 datasource、Redis 与 RabbitMQ 连接属性；不要在项目文档写入凭据。运行时用 Spring 环境变量覆盖本地值，例如 `SPRING_DATASOURCE_URL`、`SPRING_DATASOURCE_USERNAME`、`SPRING_DATASOURCE_PASSWORD`、`SPRING_DATA_REDIS_HOST`、`SPRING_DATA_REDIS_PORT`、`SPRING_RABBITMQ_HOST`、`SPRING_RABBITMQ_PORT`、`SPRING_RABBITMQ_USERNAME`、`SPRING_RABBITMQ_PASSWORD`。这不替代本项目必须设置的 `MERCHANT_JWT_SECRET`、`MALL_WORKER_ID`、`MALL_DATACENTER_ID`。
 
 > 若数据库早于 `init.sql` 的索引变更建立，`user_coupon`、`payment_record`、`logistics`、`refund` 上的唯一索引会缺失。`CouponServiceImpl.receiveCoupon` 中依赖 `DataIntegrityViolationException` 的并发幂等分支会失效；`refund` 的 `uk_refund_order` 缺失则**退款幂等静默失效**——Agent 的一次重试就是一笔重复退款，而所有测试都 mock 了 `RefundMapper`，CI 永远发现不了。核对：
 > `SELECT table_name, index_name, non_unique FROM information_schema.statistics WHERE table_schema='mall' AND table_name IN ('user_coupon','payment_record','logistics','refund');`
