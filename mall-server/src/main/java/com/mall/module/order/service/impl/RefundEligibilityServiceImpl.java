@@ -11,11 +11,11 @@ import com.mall.module.order.mapper.OrderMapper;
 import com.mall.module.order.mapper.RefundMapper;
 import com.mall.module.order.service.AfterSalesPolicyCatalog;
 import com.mall.module.order.service.RefundEligibilityService;
+import com.mall.module.order.service.RefundEligibilityEvaluator;
+import com.mall.module.order.service.RefundEligibilityEvaluator.Assessment;
 import com.mall.security.utils.UserContext;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
-
-import java.time.Duration;
-import java.time.LocalDateTime;
 
 @Service
 public class RefundEligibilityServiceImpl implements RefundEligibilityService {
@@ -23,12 +23,21 @@ public class RefundEligibilityServiceImpl implements RefundEligibilityService {
     private final OrderMapper orderMapper;
     private final RefundMapper refundMapper;
     private final AfterSalesPolicyCatalog policyCatalog;
+    private final RefundEligibilityEvaluator evaluator;
 
+    @Autowired
     public RefundEligibilityServiceImpl(OrderMapper orderMapper, RefundMapper refundMapper,
-                                        AfterSalesPolicyCatalog policyCatalog) {
+                                        AfterSalesPolicyCatalog policyCatalog,
+                                        RefundEligibilityEvaluator evaluator) {
         this.orderMapper = orderMapper;
         this.refundMapper = refundMapper;
         this.policyCatalog = policyCatalog;
+        this.evaluator = evaluator;
+    }
+
+    public RefundEligibilityServiceImpl(OrderMapper orderMapper, RefundMapper refundMapper,
+                                        AfterSalesPolicyCatalog policyCatalog) {
+        this(orderMapper, refundMapper, policyCatalog, new RefundEligibilityEvaluator());
     }
 
     @Override
@@ -39,10 +48,11 @@ public class RefundEligibilityServiceImpl implements RefundEligibilityService {
             throw new BusinessException(ResultStatus.ORDER_NOT_EXIST);
         }
 
+        Assessment assessment = evaluator.assess(order);
         RefundEligibilityVO vo = new RefundEligibilityVO()
                 .setOrderId(orderId)
-                .setRefundableAmount(order.getTotalAmount())
-                .setOrderStatus(order.getStatus())
+                .setRefundableAmount(assessment.refundableAmount())
+                .setOrderStatus(assessment.orderStatus())
                 .setCatalogFingerprint(policyCatalog.currentSnapshot().getFingerprint());
 
         Refund existing = refundMapper.selectOne(
@@ -52,11 +62,10 @@ public class RefundEligibilityServiceImpl implements RefundEligibilityService {
             return vo.setEligible(false).setReason("该订单已有退款记录，不能重复申请");
         }
 
-        long daysSinceReceipt = daysSince(order.getCreatedAt());
-        AfterSalesPolicy policy = AfterSalesPolicy.resolve(order.getStatus(), daysSinceReceipt);
+        AfterSalesPolicy policy = assessment.policy();
         if (policy == null) {
             return vo.setEligible(false)
-                    .setReason("订单当前状态（" + order.getStatus() + "）不符合任何售后政策");
+                    .setReason("订单当前状态（" + assessment.orderStatus() + "）不符合任何售后政策");
         }
 
         return vo.setEligible(true)
@@ -64,15 +73,4 @@ public class RefundEligibilityServiceImpl implements RefundEligibilityService {
                 .setPolicyTitle(policy.getTitle());
     }
 
-    /**
-     * 当前订单表没有签收时间字段，用订单创建时间近似起点。
-     * {@link Duration#toDays()} 返回完整经过的 24 小时天数，不足 24 小时的余数会被截断；
-     * 签收时间落地后应替换这个近似口径。
-     */
-    private long daysSince(LocalDateTime from) {
-        if (from == null) {
-            return 0;
-        }
-        return Duration.between(from, LocalDateTime.now()).toDays();
-    }
 }

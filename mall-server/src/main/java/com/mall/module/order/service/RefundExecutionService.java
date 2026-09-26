@@ -33,4 +33,8 @@ public interface RefundExecutionService {
      * @param reason 用户给出的退款原因，仅作记录，不影响金额
      */
     RefundEligibilityVO execute(Long orderId, String reason);
+
+    /** 带本次复核所见目录指纹与政策码的执行入口；两项须同时提供。 */
+    RefundEligibilityVO execute(Long orderId, String reason,
+                                String expectedCatalogFingerprint, String expectedPolicyCode);
 }

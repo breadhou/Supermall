@@ -1,5 +1,6 @@
 package com.mall.module.order.service.impl;
 
+import com.mall.common.utils.SnowflakeIdUtil;
 import com.mall.module.order.entity.po.Order;
 import com.mall.module.order.entity.po.Refund;
 import com.mall.module.order.entity.vo.PolicyCatalogVO;
@@ -25,7 +26,9 @@ import java.time.LocalDateTime;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.Mockito.mockStatic;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
@@ -83,6 +86,33 @@ class RefundEligibilityServiceImplTest {
         assertEquals(AfterSalesPolicy.SEVEN_DAY_NO_REASON.name(), vo.getPolicyCode());
         assertEquals(new BigDecimal("199.99"), vo.getRefundableAmount());
         assertFalse(vo.isRefundExists());
+    }
+
+    @Test
+    void readAndLockedWriteUseSamePolicyEvaluator() {
+        Order readOrder = order("SHIPPED", LocalDateTime.now().minusDays(2));
+        Order lockedOrder = order("SHIPPED", LocalDateTime.now().minusDays(2))
+                .setTotalAmount(new BigDecimal("199.990"));
+        when(orderMapper.selectById(ORDER_ID)).thenReturn(readOrder, readOrder);
+        when(orderMapper.selectByIdForUpdate(ORDER_ID)).thenReturn(lockedOrder);
+        when(refundMapper.selectOne(any())).thenReturn(null, null, null);
+
+        try (MockedStatic<SnowflakeIdUtil> snowflakeIdUtil = mockStatic(SnowflakeIdUtil.class)) {
+            snowflakeIdUtil.when(SnowflakeIdUtil::nextId).thenReturn(9100L);
+            RefundEligibilityVO read = service.check(ORDER_ID);
+            RefundExecutionServiceImpl writer =
+                    new RefundExecutionServiceImpl(orderMapper, refundMapper, service);
+
+            RefundEligibilityVO write = writer.execute(ORDER_ID, "测试理由");
+
+            assertEquals(AfterSalesPolicy.SHIPPED_NOT_RECEIVED.name(), read.getPolicyCode());
+            assertEquals(read.getPolicyCode(), write.getPolicyCode());
+            assertEquals(0, read.getRefundableAmount().compareTo(write.getRefundableAmount()));
+            org.mockito.ArgumentCaptor<Refund> refundCaptor =
+                    org.mockito.ArgumentCaptor.forClass(Refund.class);
+            verify(refundMapper).insert(refundCaptor.capture());
+            assertEquals(0, refundCaptor.getValue().getAmount().compareTo(new BigDecimal("199.99")));
+        }
     }
 
     @Test

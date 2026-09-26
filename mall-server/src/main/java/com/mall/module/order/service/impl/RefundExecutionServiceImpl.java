@@ -9,13 +9,20 @@ import com.mall.module.order.entity.po.Refund;
 import com.mall.module.order.entity.vo.RefundEligibilityVO;
 import com.mall.module.order.mapper.OrderMapper;
 import com.mall.module.order.mapper.RefundMapper;
+import com.mall.module.order.service.AfterSalesPolicyCatalog;
 import com.mall.module.order.service.RefundEligibilityService;
+import com.mall.module.order.service.RefundEligibilityEvaluator;
+import com.mall.module.order.service.RefundEligibilityEvaluator.Assessment;
 import com.mall.module.order.service.RefundExecutionService;
+import com.mall.security.utils.UserContext;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
+import java.math.BigDecimal;
+import java.util.Objects;
 
 @Service
 public class RefundExecutionServiceImpl implements RefundExecutionService {
@@ -25,45 +32,83 @@ public class RefundExecutionServiceImpl implements RefundExecutionService {
     private final OrderMapper orderMapper;
     private final RefundMapper refundMapper;
     private final RefundEligibilityService eligibilityService;
+    private final AfterSalesPolicyCatalog policyCatalog;
+    private final RefundEligibilityEvaluator evaluator;
+
+    @Autowired
+    public RefundExecutionServiceImpl(OrderMapper orderMapper,
+                                      RefundMapper refundMapper,
+                                      RefundEligibilityService eligibilityService,
+                                      AfterSalesPolicyCatalog policyCatalog,
+                                      RefundEligibilityEvaluator evaluator) {
+        this.orderMapper = orderMapper;
+        this.refundMapper = refundMapper;
+        this.eligibilityService = eligibilityService;
+        this.policyCatalog = policyCatalog;
+        this.evaluator = evaluator;
+    }
 
     public RefundExecutionServiceImpl(OrderMapper orderMapper,
                                       RefundMapper refundMapper,
                                       RefundEligibilityService eligibilityService) {
-        this.orderMapper = orderMapper;
-        this.refundMapper = refundMapper;
-        this.eligibilityService = eligibilityService;
+        this(orderMapper, refundMapper, eligibilityService,
+                new AfterSalesPolicyCatalog(), new RefundEligibilityEvaluator());
     }
 
     @Override
     @Transactional
     public RefundEligibilityVO execute(Long orderId, String reason) {
-        // 先判资格：不符合就直接拒绝，不进入写路径。
-        //
-        // ⚠️「已有退款记录」**不等于**「不可退」——那是**重试**，必须落到下面的幂等分支
-        // 返回既有结果，而不是报错。计划要求「重复调用返回同一结果而不是报错」，
-        // 若这里只判 isEligible()，顺序重试会在这一行被 50002 挡掉，幂等分支永远不可达。
-        RefundEligibilityVO eligibility = eligibilityService.check(orderId);
-        if (!eligibility.isEligible() && !eligibility.isRefundExists()) {
-            throw new BusinessException(ResultStatus.ORDER_NOT_REFUNDABLE);
+        return execute(orderId, reason, null, null);
+    }
+
+    @Override
+    @Transactional
+    public RefundEligibilityVO execute(Long orderId, String reason,
+                                       String expectedCatalogFingerprint, String expectedPolicyCode) {
+        if ((expectedCatalogFingerprint == null) != (expectedPolicyCode == null)
+                || expectedCatalogFingerprint != null && expectedCatalogFingerprint.isBlank()
+                || expectedPolicyCode != null && expectedPolicyCode.isBlank()) {
+            throw new BusinessException(ResultStatus.PARAM_ERROR);
         }
 
-        // 锁订单行，防并发重复执行。
-        //
-        // ⚠️ 不要指望「锁后再查一次」能看见并发赢家刚提交的退款行：本方法是 @Transactional，
-        // 而上面的 check() 里的 selectById 已经建立了本事务的 read view；InnoDB 在
-        // REPEATABLE READ 下不会刷新它。selectByIdForUpdate **只刷新被锁的那一行，不刷新快照**。
-        // 所以下面的复查可能读到 null，随后撞上 uk_refund_order。
-        // **真正的并发裁判是唯一索引**，不是这次复查——见下面的 catch。
+        // This ordinary read establishes the repeatable-read view. Defer a denial until
+        // the locked order and a possible concurrent refund winner have been checked.
+        RefundEligibilityVO eligibility = eligibilityService.check(orderId);
         Order order = orderMapper.selectByIdForUpdate(orderId);
-        if (order == null) {
+        if (order == null || !Objects.equals(UserContext.getUserId(), order.getUserId())) {
             throw new BusinessException(ResultStatus.ORDER_NOT_EXIST);
         }
 
         Refund existing = refundMapper.selectOne(
                 new LambdaQueryWrapper<Refund>().eq(Refund::getOrderId, orderId));
         if (existing != null) {
-            // 幂等分支：Agent 重试会走到这里。不报错、不重复退款，返回既有结果。
             return idempotentResult(orderId, existing);
+        }
+
+        Assessment locked = evaluator.assess(order);
+        String lockedPolicyCode = locked.policy() == null ? null : locked.policy().name();
+        String currentFingerprint = policyCatalog.currentSnapshot().getFingerprint();
+        ResultStatus rejection = null;
+        if (!eligibility.isEligible()) {
+            rejection = ResultStatus.ORDER_NOT_REFUNDABLE;
+        } else if (locked.policy() == null
+                || !Objects.equals(eligibility.getOrderStatus(), locked.orderStatus())
+                || !sameAmount(eligibility.getRefundableAmount(), locked.refundableAmount())
+                || !Objects.equals(eligibility.getPolicyCode(), lockedPolicyCode)
+                || !Objects.equals(eligibility.getCatalogFingerprint(), currentFingerprint)
+                || expectedCatalogFingerprint != null
+                    && (!expectedCatalogFingerprint.equals(currentFingerprint)
+                        || !expectedPolicyCode.equals(lockedPolicyCode))) {
+            rejection = ResultStatus.REFUND_REVIEW_STALE;
+        }
+        if (rejection != null) {
+            // An old read view can hide a winner that committed while the order lock
+            // was awaited. Only this rejection path takes a refund-key locking read.
+            Refund winner = refundMapper.selectByOrderIdForUpdate(orderId);
+            if (winner != null) {
+                return idempotentResult(orderId, winner);
+            }
+            throw new BusinessException(rejection);
         }
 
         try {
@@ -72,7 +117,7 @@ public class RefundExecutionServiceImpl implements RefundExecutionService {
                     .setOrderId(orderId)
                     .setUserId(order.getUserId())
                     // 金额一律取服务端算出的值，绝不用入参
-                    .setAmount(eligibility.getRefundableAmount())
+                    .setAmount(locked.refundableAmount())
                     .setReason(reason)
                     .setStatus(REFUNDED)
                     .setCreatedAt(LocalDateTime.now()));
@@ -105,7 +150,12 @@ public class RefundExecutionServiceImpl implements RefundExecutionService {
         order.setStatus(REFUNDED);
         orderMapper.updateById(order);
 
-        return eligibility;
+        return eligibility.setRefundableAmount(locked.refundableAmount());
+    }
+
+    private boolean sameAmount(BigDecimal readAmount, BigDecimal lockedAmount) {
+        return readAmount != null && lockedAmount != null
+                && readAmount.compareTo(lockedAmount) == 0;
     }
 
     /**

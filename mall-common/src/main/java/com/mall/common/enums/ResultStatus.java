@@ -27,6 +27,7 @@ public enum ResultStatus {
     ORDER_NOT_REFUNDABLE(50002, "该订单当前不可退款"),
     REFUND_ALREADY_EXISTS(50003, "该订单已有退款记录"),
     REFUND_NOT_EXECUTABLE(50004, "退款记录状态不允许执行"),
+    REFUND_REVIEW_STALE(50005, "退款复核依据已变化，请重新核实"),
 
     // ==================== 秒杀模块 60000 ====================
     SECKILL_END(60000, "商品已经秒杀完毕"),

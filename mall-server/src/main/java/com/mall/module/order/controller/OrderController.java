@@ -115,7 +115,7 @@ public class OrderController {
 
     /**
      * 执行退款。幂等——Agent 会重试，重复调用返回既有结论而非报错。
-     * 金额由服务端决定，请求体只携带原因。
+     * 金额由服务端决定；请求体可在原因之外同时携带复核目录指纹与政策码。
      *
      * <p><b>两种响应形态，调用方必须都能正确处理</b>（与
      * {@link RefundExecutionService#execute} 的契约一致）：</p>
@@ -148,8 +148,19 @@ public class OrderController {
     @PostMapping("/{id}/refund/execute")
     public Result<RefundEligibilityVO> executeRefund(@PathVariable Long id,
                                                      @Valid @RequestBody RefundReasonDTO dto) {
+        String fingerprint = dto.getExpectedCatalogFingerprint();
+        String policyCode = dto.getExpectedPolicyCode();
+        if (fingerprint == null && policyCode == null) {
+            Result<RefundEligibilityVO> result = Result.build();
+            result.success(refundExecutionService.execute(id, dto.getReason()));
+            return result;
+        }
+        if (fingerprint == null || fingerprint.isBlank()
+                || policyCode == null || policyCode.isBlank()) {
+            return Result.fail(ResultStatus.PARAM_ERROR);
+        }
         Result<RefundEligibilityVO> result = Result.build();
-        result.success(refundExecutionService.execute(id, dto.getReason()));
+        result.success(refundExecutionService.execute(id, dto.getReason(), fingerprint, policyCode));
         return result;
     }
 
