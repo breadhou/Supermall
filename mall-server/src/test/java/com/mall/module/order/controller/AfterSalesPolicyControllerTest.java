@@ -1,10 +1,23 @@
 package com.mall.module.order.controller;
 
 import com.mall.common.result.Result;
+import com.mall.module.order.entity.po.Order;
+import com.mall.module.order.entity.vo.RefundEligibilityVO;
 import com.mall.module.order.entity.vo.PolicyCatalogVO;
 import com.mall.module.order.entity.vo.PolicyClauseVO;
 import com.mall.module.order.enums.AfterSalesPolicy;
+import com.mall.module.order.mapper.OrderMapper;
+import com.mall.module.order.mapper.RefundMapper;
+import com.mall.module.order.service.AfterSalesPolicyCatalog;
+import com.mall.module.order.service.impl.RefundEligibilityServiceImpl;
+import com.mall.security.utils.UserContext;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.Test;
+import org.mockito.MockedStatic;
+
+import java.math.BigDecimal;
+import java.time.LocalDateTime;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -14,10 +27,15 @@ import java.util.stream.Collectors;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.mockStatic;
+import static org.mockito.Mockito.when;
 
 class AfterSalesPolicyControllerTest {
 
-    private final AfterSalesPolicyController controller = new AfterSalesPolicyController();
+    private final AfterSalesPolicyCatalog policyCatalog = new AfterSalesPolicyCatalog();
+    private final AfterSalesPolicyController controller = new AfterSalesPolicyController(policyCatalog);
 
     @Test
     void listPolicies_shouldReturnSuccessfulCatalogWithEveryPolicy() {
@@ -26,6 +44,34 @@ class AfterSalesPolicyControllerTest {
         assertEquals(0, result.getCode());
         assertNotNull(result.getData());
         assertEquals(AfterSalesPolicy.values().length, result.getData().getClauses().size());
+    }
+
+    @Test
+    void policyEndpointAndEligibilityUseSameSnapshot() {
+        PolicyCatalogVO snapshot = controller.listPolicies().getData();
+        Long orderId = 9001L;
+        Long userId = 1001L;
+        Order order = new Order()
+                .setId(orderId)
+                .setUserId(userId)
+                .setStatus("RECEIVED")
+                .setTotalAmount(new BigDecimal("199.99"))
+                .setCreatedAt(LocalDateTime.now().minusDays(2));
+        OrderMapper orderMapper = mock(OrderMapper.class);
+        RefundMapper refundMapper = mock(RefundMapper.class);
+        when(orderMapper.selectById(orderId)).thenReturn(order);
+        when(refundMapper.selectOne(any())).thenReturn(null);
+
+        try (MockedStatic<UserContext> userContext = mockStatic(UserContext.class)) {
+            userContext.when(UserContext::getUserId).thenReturn(userId);
+            RefundEligibilityVO eligibility =
+                    new RefundEligibilityServiceImpl(orderMapper, refundMapper, policyCatalog).check(orderId);
+            JsonNode eligibilityJson = new ObjectMapper().valueToTree(eligibility);
+
+            assertEquals(snapshot.getFingerprint(),
+                    eligibilityJson.path("catalogFingerprint").asText(null));
+            assertEquals(order.getStatus(), eligibilityJson.path("orderStatus").asText(null));
+        }
     }
 
     @Test

@@ -2,11 +2,16 @@ package com.mall.module.order.service.impl;
 
 import com.mall.module.order.entity.po.Order;
 import com.mall.module.order.entity.po.Refund;
+import com.mall.module.order.entity.vo.PolicyCatalogVO;
 import com.mall.module.order.entity.vo.RefundEligibilityVO;
+import com.mall.module.order.controller.AfterSalesPolicyController;
 import com.mall.module.order.enums.AfterSalesPolicy;
 import com.mall.module.order.mapper.OrderMapper;
 import com.mall.module.order.mapper.RefundMapper;
+import com.mall.module.order.service.AfterSalesPolicyCatalog;
 import com.mall.security.utils.UserContext;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -45,7 +50,8 @@ class RefundEligibilityServiceImplTest {
         userContextMock = mockStatic(UserContext.class);
         userContextMock.when(UserContext::getUserId).thenReturn(USER_ID);
 
-        service = new RefundEligibilityServiceImpl(orderMapper, refundMapper);
+        service = new RefundEligibilityServiceImpl(orderMapper, refundMapper,
+                new AfterSalesPolicyCatalog());
     }
 
     @AfterEach
@@ -77,6 +83,45 @@ class RefundEligibilityServiceImplTest {
         assertEquals(AfterSalesPolicy.SEVEN_DAY_NO_REASON.name(), vo.getPolicyCode());
         assertEquals(new BigDecimal("199.99"), vo.getRefundableAmount());
         assertFalse(vo.isRefundExists());
+    }
+
+    @Test
+    void eligibleAndIneligibleResultsCarryCurrentCatalogFingerprint() {
+        PolicyCatalogVO snapshot = new AfterSalesPolicyController(
+                new AfterSalesPolicyCatalog()).listPolicies().getData();
+        Order eligibleOrder = order("RECEIVED", 2);
+        Order deniedOrder = order("PENDING", 1);
+        Order existingRefundOrder = order("SHIPPED", 1);
+        when(orderMapper.selectById(ORDER_ID))
+                .thenReturn(eligibleOrder, deniedOrder, existingRefundOrder);
+        when(refundMapper.selectOne(any()))
+                .thenReturn(null, null,
+                        new Refund().setId(1L).setOrderId(ORDER_ID).setStatus("PENDING"));
+
+        RefundEligibilityVO eligible = service.check(ORDER_ID);
+        RefundEligibilityVO denied = service.check(ORDER_ID);
+        RefundEligibilityVO existingRefund = service.check(ORDER_ID);
+
+        assertTrue(eligible.isEligible());
+        assertFalse(denied.isEligible());
+        assertTrue(existingRefund.isRefundExists());
+        assertFalse(existingRefund.isEligible());
+        assertAll(
+                () -> assertCarriesSnapshotAndStatus(snapshot, eligibleOrder, eligible),
+                () -> assertCarriesSnapshotAndStatus(snapshot, deniedOrder, denied),
+                () -> assertCarriesSnapshotAndStatus(snapshot, existingRefundOrder, existingRefund));
+    }
+
+    private static void assertCarriesSnapshotAndStatus(
+            PolicyCatalogVO snapshot, Order order, RefundEligibilityVO eligibility) {
+        JsonNode json = new ObjectMapper().valueToTree(eligibility);
+        String fingerprint = json.path("catalogFingerprint").asText(null);
+
+        assertAll(
+                () -> assertEquals(snapshot.getFingerprint(), fingerprint),
+                () -> assertNotNull(fingerprint),
+                () -> assertTrue(fingerprint != null && fingerprint.matches("[0-9a-f]{64}")),
+                () -> assertEquals(order.getStatus(), json.path("orderStatus").asText(null)));
     }
 
     @Test

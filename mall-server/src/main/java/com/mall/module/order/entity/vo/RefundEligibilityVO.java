@@ -23,6 +23,10 @@ public class RefundEligibilityVO {
     /** 适用政策码，不可退时为 null。 */
     private String policyCode;
     private String policyTitle;
+    /** 资格判定时使用的政策目录指纹。 */
+    private String catalogFingerprint;
+    /** 资格判定时读取到的订单状态。 */
+    private String orderStatus;
     /** 可退金额，由服务端从订单算出。 */
     private BigDecimal refundableAmount;
     /** 是否已有退款记录（含已完成），用于避免重复申请。 */

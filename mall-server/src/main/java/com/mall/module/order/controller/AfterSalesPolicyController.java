@@ -2,14 +2,10 @@ package com.mall.module.order.controller;
 
 import com.mall.common.result.Result;
 import com.mall.module.order.entity.vo.PolicyCatalogVO;
-import com.mall.module.order.entity.vo.PolicyClauseVO;
-import com.mall.module.order.enums.AfterSalesPolicy;
+import com.mall.module.order.service.AfterSalesPolicyCatalog;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
-
-import java.util.Arrays;
-import java.util.List;
 
 /**
  * Exposes the policy clauses defined with the eligibility rules.
@@ -21,15 +17,16 @@ import java.util.List;
 @RequestMapping("/api/after-sales")
 public class AfterSalesPolicyController {
 
+    private final AfterSalesPolicyCatalog policyCatalog;
+
+    public AfterSalesPolicyController(AfterSalesPolicyCatalog policyCatalog) {
+        this.policyCatalog = policyCatalog;
+    }
+
     @GetMapping("/policies")
     public Result<PolicyCatalogVO> listPolicies() {
-        List<PolicyClauseVO> clauses = Arrays.stream(AfterSalesPolicy.values())
-                .map(policy -> PolicyClauseVO.of(
-                        policy.name(), policy.getTitle(), policy.getClauseText()))
-                .toList();
-
         Result<PolicyCatalogVO> result = Result.build();
-        result.success(PolicyCatalogVO.of(clauses));
+        result.success(policyCatalog.currentSnapshot());
         return result;
     }
 }

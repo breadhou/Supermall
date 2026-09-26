@@ -9,6 +9,7 @@ import com.mall.module.order.entity.vo.RefundEligibilityVO;
 import com.mall.module.order.enums.AfterSalesPolicy;
 import com.mall.module.order.mapper.OrderMapper;
 import com.mall.module.order.mapper.RefundMapper;
+import com.mall.module.order.service.AfterSalesPolicyCatalog;
 import com.mall.module.order.service.RefundEligibilityService;
 import com.mall.security.utils.UserContext;
 import org.springframework.stereotype.Service;
@@ -21,10 +22,13 @@ public class RefundEligibilityServiceImpl implements RefundEligibilityService {
 
     private final OrderMapper orderMapper;
     private final RefundMapper refundMapper;
+    private final AfterSalesPolicyCatalog policyCatalog;
 
-    public RefundEligibilityServiceImpl(OrderMapper orderMapper, RefundMapper refundMapper) {
+    public RefundEligibilityServiceImpl(OrderMapper orderMapper, RefundMapper refundMapper,
+                                        AfterSalesPolicyCatalog policyCatalog) {
         this.orderMapper = orderMapper;
         this.refundMapper = refundMapper;
+        this.policyCatalog = policyCatalog;
     }
 
     @Override
@@ -37,7 +41,9 @@ public class RefundEligibilityServiceImpl implements RefundEligibilityService {
 
         RefundEligibilityVO vo = new RefundEligibilityVO()
                 .setOrderId(orderId)
-                .setRefundableAmount(order.getTotalAmount());
+                .setRefundableAmount(order.getTotalAmount())
+                .setOrderStatus(order.getStatus())
+                .setCatalogFingerprint(policyCatalog.currentSnapshot().getFingerprint());
 
         Refund existing = refundMapper.selectOne(
                 new LambdaQueryWrapper<Refund>().eq(Refund::getOrderId, orderId));
