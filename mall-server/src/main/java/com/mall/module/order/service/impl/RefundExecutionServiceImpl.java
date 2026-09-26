@@ -89,16 +89,18 @@ public class RefundExecutionServiceImpl implements RefundExecutionService {
         String lockedPolicyCode = locked.policy() == null ? null : locked.policy().name();
         String currentFingerprint = policyCatalog.currentSnapshot().getFingerprint();
         ResultStatus rejection = null;
-        if (!eligibility.isEligible()) {
+        boolean reviewedPairStale = expectedCatalogFingerprint != null
+                && (!expectedCatalogFingerprint.equals(currentFingerprint)
+                    || !expectedPolicyCode.equals(lockedPolicyCode));
+        if (reviewedPairStale) {
+            rejection = ResultStatus.REFUND_REVIEW_STALE;
+        } else if (!eligibility.isEligible()) {
             rejection = ResultStatus.ORDER_NOT_REFUNDABLE;
         } else if (locked.policy() == null
                 || !Objects.equals(eligibility.getOrderStatus(), locked.orderStatus())
                 || !sameAmount(eligibility.getRefundableAmount(), locked.refundableAmount())
                 || !Objects.equals(eligibility.getPolicyCode(), lockedPolicyCode)
-                || !Objects.equals(eligibility.getCatalogFingerprint(), currentFingerprint)
-                || expectedCatalogFingerprint != null
-                    && (!expectedCatalogFingerprint.equals(currentFingerprint)
-                        || !expectedPolicyCode.equals(lockedPolicyCode))) {
+                || !Objects.equals(eligibility.getCatalogFingerprint(), currentFingerprint)) {
             rejection = ResultStatus.REFUND_REVIEW_STALE;
         }
         if (rejection != null) {

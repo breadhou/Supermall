@@ -270,17 +270,45 @@ class RefundExecutionServiceImplTest {
     }
 
     @Test
-    void execute_shouldRefuseWhenNotEligible() {
+    void reasonOnlyInitiallyIneligibleCallKeepsOrderNotRefundableCode() {
         when(eligibilityService.check(ORDER_ID)).thenReturn(new RefundEligibilityVO()
-                .setOrderId(ORDER_ID).setEligible(false).setReason("不符合政策"));
+                .setOrderId(ORDER_ID).setEligible(false).setOrderStatus("PENDING")
+                .setCatalogFingerprint(currentFingerprint()).setReason("不符合政策"));
         when(orderMapper.selectByIdForUpdate(ORDER_ID))
                 .thenReturn(lockedOrder("PENDING", "199.99", USER_ID));
+        when(refundMapper.selectOne(any())).thenReturn(null);
+        when(refundMapper.selectByOrderIdForUpdate(ORDER_ID)).thenReturn(null);
 
         BusinessException exception = assertThrows(
                 BusinessException.class, () -> service.execute(ORDER_ID, "试试"));
 
         assertEquals(ResultStatus.ORDER_NOT_REFUNDABLE, exception.getStatus());
+        assertEquals(50002, exception.getStatus().getCode());
         verify(refundMapper, never()).insert(any(Refund.class));
+        verify(orderMapper, never()).updateById(any(Order.class));
+    }
+
+    @Test
+    void initiallyIneligibleReviewedCallReturnsStaleCode() {
+        when(eligibilityService.check(ORDER_ID)).thenReturn(new RefundEligibilityVO()
+                .setOrderId(ORDER_ID).setEligible(false).setOrderStatus("PENDING")
+                .setCatalogFingerprint(currentFingerprint())
+                .setReason("订单当前状态（PENDING）不符合任何售后政策"));
+        when(orderMapper.selectByIdForUpdate(ORDER_ID))
+                .thenReturn(lockedOrder("PENDING", "199.99", USER_ID));
+        when(refundMapper.selectOne(any())).thenReturn(null);
+        when(refundMapper.selectByOrderIdForUpdate(ORDER_ID)).thenReturn(null);
+
+        BusinessException exception = assertThrows(BusinessException.class,
+                () -> executeReviewed(currentFingerprint(),
+                        "SEVEN_DAY_NO_REASON"));
+
+        assertEquals(ResultStatus.REFUND_REVIEW_STALE, exception.getStatus());
+        assertEquals(50005, exception.getStatus().getCode());
+        verify(refundMapper).selectOne(any());
+        verify(refundMapper).selectByOrderIdForUpdate(ORDER_ID);
+        verify(refundMapper, never()).insert(any(Refund.class));
+        verify(orderMapper, never()).updateById(any(Order.class));
     }
 
     @Test
