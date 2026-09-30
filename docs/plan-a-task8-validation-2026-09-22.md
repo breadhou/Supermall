@@ -1,6 +1,7 @@
 # Plan A Task 8 真实环境验证记录
 
-验证日期：2026-09-22  
+验证日期：2026-09-22
+
 分支：`feat/after-sales-capability`（Task 7 提交 `b1ff494`）
 
 本记录只保留脱敏后的验证结果，不包含 JWT、密码、密钥或凭据文件路径。
@@ -94,4 +95,3 @@ Started MallApplication
 2. 只支持整单退款，退款金额由服务端取订单实付金额，不支持部分退款。
 3. 退款即时完成，没有真实支付网关；新执行端点将订单推进到 `REFUNDED`。
 4. 旧的 `POST /api/orders/{id}/refund` 申请路径继续保留，语义是落 `PENDING`；Agent 使用幂等的 `/refund/execute` 路径。
-

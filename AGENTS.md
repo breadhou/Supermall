@@ -220,16 +220,16 @@ supermall/
 | 阶段八 | 支付物流 | payment_record、logistics | 已完成，真实集成验证 2026-09-18 通过（发货/送达无 HTTP 出口，待阶段九） |
 | 阶段九 | 商家后台 | merchant、admin_user | 已完成（9.1 商家端 + 9.2 管理后台，均通过真实环境验证） |
 
-## 测试报告基线（2026-09-23）
+## 测试报告基线（2026-09-30）
 
-现有 Surefire 报告汇总为 **228 个测试，38 个测试类，0 失败 / 0 错误 / 0 跳过**。这是 2026-09-23 的报告快照，**不是本次会话重新运行 `mvn test` 的结果**。
+阶段 3 主线合并后，在 `878ac93` 使用 JDK 22 重新运行完整 `mvn test`，退出 0、`BUILD SUCCESS`。本次新生成的 Surefire 报告汇总为 **243 个测试，38 个测试类，0 失败 / 0 错误 / 0 跳过**。
 
 | 模块 | 测试数 | 测试类 |
 |------|--------|--------|
 | mall-common | 10 | 1 |
 | mall-security | 16 | 3 |
 | mall-infra | 6 | 2 |
-| mall-server | 196 | 32 |
+| mall-server | 211 | 32 |
 
 执行方式（本机 `mvn` 不在 PATH）：
 
@@ -237,7 +237,7 @@ supermall/
 & "D:\JetBrains\IntelliJ IDEA 2026.2\plugins\maven-plugin\lib\maven3\bin\mvn.cmd" test
 ```
 
-### 已知覆盖缺口
+### 已知覆盖缺口（2026-09-23 历史快照）
 
 下表是**类级覆盖**（是否存在对应测试类），不是行覆盖率。真实行覆盖率需 JaCoCo，当前 pom 未配置。
 
@@ -320,4 +320,4 @@ MyBatis-Plus 配置了逻辑删除字段 `deleted`（`0`=未删除，`1`=已删�
 
 | 项目 | 位置 | 关系 |
 |---|---|---|
-| **after-sales-agent** | `D:\sourcecode\after-sales-agent` | 售后决策与执行 Agent，通过 **MCP** 调用本项目的能力，不直连数据库。设计与计划已完成，待执行 |
+| **after-sales-agent** | `D:\sourcecode\after-sales-agent` | 售后决策与执行 Agent，通过 **MCP** 调用本项目的能力，不直连数据库。计划 A/B/C 与阶段 3A/3B 已验收；售后能力及阶段 3A 后端版本校验已集成到本仓库 main，Agent/MCP 已集成到其 main。阶段 4 评测待讨论 |

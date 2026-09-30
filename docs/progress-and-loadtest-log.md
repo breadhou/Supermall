@@ -261,4 +261,3 @@
 - **验证**：普通用户打旧路径 `60002` 且库存不变；打新路径 403；管理员打新路径成功；无 token 403。
 - **副作用需知情**：旧路径不是 404，而是落到 `POST /api/seckill/{itemId}/{path}` 执行接口上被当作非法秒杀请求拒掉——结果无害但不够干净。
 - **压测脚本已同步**：三个 `.jmx` 改用管理员 token；新增 `jmeter/prepare-admin-token.ps1`（登录 `/api/admin/login` 并校验 `SUPER_ADMIN` 角色）产出 `admin-token.csv` 与 `admin-credentials.csv`。**跑秒杀压测前必须先执行它**，否则预热步骤会 403。`seckill-load-test.jmx` 中主线程的用户登录未动。
-
