@@ -3,8 +3,8 @@
 Private files live beneath the configured output root. A trial directory is
 claimed once; incomplete or uncertain writes never trigger automatic recreation,
 even after process restart. The helper does not sign merchant tokens or execute
-SQL/shell. Database age/oracle use a separate restricted adapter; transaction
-probes remain a subsequent task hook.
+SQL/shell. Database age/oracle use a separate restricted adapter; opt-in
+transaction probes dispatch only fixed test methods with private evidence.
 """
 
 import argparse
@@ -14,8 +14,10 @@ import json
 import os
 import re
 import secrets
+import subprocess
 import sys
 import tempfile
+from datetime import datetime
 from decimal import Decimal
 from pathlib import Path, PurePosixPath
 from urllib.parse import quote, urlsplit
@@ -35,7 +37,20 @@ ENV_KEYS = {"SUPERMALL_BASE_URL", "DEMO_MERCHANT_TOKEN", "DEMO_MERCHANT_USERNAME
             "AFTER_SALES_EVAL_CATEGORY_ID", "AFTER_SALES_EVAL_DEMO_CATALOG",
             "AFTER_SALES_EVAL_DEMO_MANIFEST", "SPRING_DATASOURCE_URL",
             "SPRING_DATASOURCE_USERNAME", "SPRING_DATASOURCE_PASSWORD", "MYSQL_EXE",
-            "PATH", "SystemRoot", "SYSTEMROOT", "WINDIR", "TEMP", "TMP"}
+            "PATH", "SystemRoot", "SYSTEMROOT", "WINDIR", "TEMP", "TMP",
+            "AFTER_SALES_EVAL_DB_TEST", "AFTER_SALES_EVAL_MAVEN_EXE", "JAVA_HOME",
+            "MERCHANT_JWT_SECRET", "MALL_WORKER_ID", "MALL_DATACENTER_ID",
+            "SPRING_DATA_REDIS_HOST", "SPRING_DATA_REDIS_PORT", "SPRING_DATA_REDIS_PASSWORD",
+            "SPRING_RABBITMQ_HOST", "SPRING_RABBITMQ_PORT", "SPRING_RABBITMQ_USERNAME",
+            "SPRING_RABBITMQ_PASSWORD"}
+PROBE_METHODS = {"ROLLBACK_AFTER_INSERT": "rollbackAfterInsert",
+    "CONCURRENT_IDEMPOTENCY": "concurrentIdempotency",
+    "LEGACY_PENDING": "legacyPendingDoesNotMeanRefunded", "STALE_POLICY": "stalePolicyDoesNotWrite"}
+JVM_KEYS = {"JAVA_HOME", "PATH", "SystemRoot", "SYSTEMROOT", "WINDIR", "TEMP", "TMP",
+    "SPRING_DATASOURCE_URL", "SPRING_DATASOURCE_USERNAME", "SPRING_DATASOURCE_PASSWORD",
+    "MERCHANT_JWT_SECRET", "MALL_WORKER_ID", "MALL_DATACENTER_ID",
+    "SPRING_DATA_REDIS_HOST", "SPRING_DATA_REDIS_PORT", "SPRING_DATA_REDIS_PASSWORD",
+    "SPRING_RABBITMQ_HOST", "SPRING_RABBITMQ_PORT", "SPRING_RABBITMQ_USERNAME", "SPRING_RABBITMQ_PASSWORD"}
 
 
 class FixtureError(Exception):
@@ -329,6 +344,8 @@ def preflight(environment):
     adapter = _db_adapter()
     if adapter is not None:
         adapter.preflight(environment)
+    if environment.get("AFTER_SALES_EVAL_DB_TEST") == "true":
+        _clock_preflight(environment)
 
 
 def _db_adapter():
@@ -408,6 +425,151 @@ def _reply(op, status="COMPLETED", **payload):
 
 def _error(op):
     return _reply(op, "ERROR", errorCategory="FIXTURE_ERROR")
+
+
+def _java_executable(environment):
+    return str(Path(_text(environment.get("JAVA_HOME"))) / "bin" / ("java.exe" if os.name == "nt" else "java"))
+
+
+def _clock_preflight(environment):
+    """Measure the evaluator's actual LocalDateTime clock against DB NOW(6).
+
+    This standard-library Java source uses the same clock as the actual
+    RefundEligibilityEvaluator. It starts no Spring context and performs no
+    writes. Its measurements and native output stay in the helper domain.
+    """
+    if environment.get("AFTER_SALES_EVAL_DB_TEST") != "true":
+        raise FixtureError()
+    adapter = _db_adapter()
+    if adapter is None:
+        raise FixtureError()
+    client = adapter._Mysql(environment)
+    client.readiness()
+    root, _ = _scope({"runId": "clock", "caseId": "DEV-CLOCK", "trialId": "measurement"}, environment)
+    root.mkdir(parents=True, exist_ok=True)
+    directory = Path(tempfile.mkdtemp(prefix="clock-gate-", dir=root))
+    source = directory / "EvaluationClock.java"
+    source.write_text('import java.time.*;\nclass EvaluationClock { public static void main(String[] args) {\n'
+        'System.out.print("{\\"localDateTime\\":\\"" + LocalDateTime.now() + "\\",\\"zoneId\\":\\""'
+        ' + ZoneId.systemDefault() + "\\",\\"instant\\":\\"" + Instant.now() + "\\"}"); }}\n', encoding="utf-8")
+    sql = "SELECT DATE_FORMAT(NOW(6), '%Y-%m-%dT%H:%i:%s.%f');"
+    evidence = {"status": "PREPARED"}
+    _atomic_json(directory / "clock-evidence.json", evidence)
+    try:
+        host_before = datetime.now()
+        before = client.query(sql, 1)
+        result = subprocess.run([_java_executable(environment), "--source", "17", str(source)],
+            shell=False, capture_output=True, text=True, encoding="utf-8", timeout=30,
+            env={k: v for k, v in environment.items() if k in {
+                "JAVA_HOME", "PATH", "SystemRoot", "SYSTEMROOT", "WINDIR", "TEMP", "TMP"}})
+        (directory / "jvm.stdout").write_text(result.stdout, encoding="utf-8")
+        (directory / "jvm.stderr").write_text(result.stderr, encoding="utf-8")
+        after = client.query(sql, 1)
+        host_after = datetime.now()
+        clock = json.loads(result.stdout)
+        _object(clock, ("localDateTime", "zoneId", "instant"))
+        if result.returncode != 0 or len(before) != 1 or len(after) != 1:
+            raise FixtureError()
+        start, end, jvm = adapter._time(before[0][0]), adapter._time(after[0][0]), adapter._time(clock["localDateTime"])
+        elapsed = (end - start).total_seconds()
+        lower, upper = (jvm - start).total_seconds(), (jvm - end).total_seconds()
+        evidence.update(dbBefore=before[0][0], dbAfter=after[0][0], jvm=clock,
+            hostBefore=host_before.isoformat(), hostAfter=host_after.isoformat(),
+            intervalSeconds=elapsed, jvmOffsetLowerSeconds=lower, jvmOffsetUpperSeconds=upper)
+        if elapsed < 0 or elapsed > 10 or lower < -2 or upper > 2:
+            raise FixtureError()
+        evidence["status"] = "COMPLETED"
+        _atomic_json(directory / "clock-evidence.json", evidence)
+        return evidence
+    except Exception:
+        evidence.update(status="ERROR", errorCategory="FIXTURE_ERROR")
+        _atomic_json(directory / "clock-evidence.json", evidence)
+        raise FixtureError() from None
+
+
+def _probe_environment(environment, ledger_path, output, name):
+    child = {k: v for k, v in environment.items() if k in JVM_KEYS}
+    _text(child.get("MERCHANT_JWT_SECRET"))
+    # The running backend uses the configured tuple. The sequential test JVM
+    # always chooses its next tuple; never blindly reuse the live instance ID.
+    worker = int(_pattern(child.get("MALL_WORKER_ID"), re.compile(r"(?:[0-9]|[12][0-9]|3[01])")))
+    center = int(_pattern(child.get("MALL_DATACENTER_ID"), re.compile(r"(?:[0-9]|[12][0-9]|3[01])")))
+    selected = (center * 32 + worker + 1) % 1024
+    child.update(MALL_WORKER_ID=str(selected % 32), MALL_DATACENTER_ID=str(selected // 32),
+        AFTER_SALES_EVAL_DB_TEST="true", AFTER_SALES_EVAL_LEDGER=str(ledger_path.resolve()),
+        AFTER_SALES_EVAL_OUTPUT=str(output.resolve()), AFTER_SALES_EVAL_PROBE=name)
+    return child
+
+
+def probe(request: dict, environment: dict[str, str]) -> dict:
+    """One explicitly enabled, ledger-owned fixed Java probe; no automatic retry."""
+    output = None
+    try:
+        # Check before even loading the native adapter: default tests touch no DB/JVM.
+        if environment.get("AFTER_SALES_EVAL_DB_TEST") != "true":
+            raise FixtureError()
+        _validate_request(request, environment)
+        if request["op"] != "probe":
+            raise FixtureError()
+        adapter = _db_adapter()
+        if adapter is None:
+            raise FixtureError()
+        path, ledger = adapter._load_ledger(_relative_ledger(request, environment), environment)
+        _validate_fixture(ledger["fixture"], environment)
+        if (ledger["status"] != "COMPLETED" or len(ledger["orders"]) != 1
+                or set(ledger["orders"]) != set(ledger["fixture"]["orders"])
+                or any(entry.get("state") != "COMPLETED" for entry in ledger["operations"])
+                or any(p["source"] != "RUN_MUTABLE" for p in ledger["fixture"]["products"].values())):
+            raise FixtureError()
+        order = next(iter(ledger["orders"].values()))
+        existing = "PENDING" if request["probe"] == "LEGACY_PENDING" else "NONE"
+        if (order["owner"] != ledger["fixture"]["activeActor"] or order["existingRefund"] != existing
+                or order.get("preparedStatus") != order["requestedStatus"]
+                or order["preparedStatus"] not in ("PAID", "DELIVERED", "RECEIVED")):
+            raise FixtureError()
+        adapter.preflight(environment)
+        _clock_preflight(environment)
+        # Preserve a claim even on failure/timeout. A later invocation cannot
+        # silently re-run a possibly committed transaction.
+        if any(path.parent.glob("probe-*")):
+            raise FixtureError()
+        with (path.parent / "probe-claim.json").open("x", encoding="utf-8") as stream:
+            json.dump({"probe": request["probe"]}, stream)
+            stream.flush()
+            os.fsync(stream.fileno())
+        candidate = path.parent / ("probe-" + request["probe"])
+        candidate.mkdir()
+        output = candidate
+        child = _probe_environment(environment, path, output, request["probe"])
+        argv = [_text(environment.get("AFTER_SALES_EVAL_MAVEN_EXE")), "-pl", "mall-server", "-am",
+            "-Dtest=AfterSalesDatabaseEvaluationIT#" + PROBE_METHODS[request["probe"]],
+            "-Dsurefire.failIfNoSpecifiedTests=false", "test"]
+        _atomic_json(output / "launch.json", {"status": "PREPARED", "probe": request["probe"]})
+        result = subprocess.run(argv, cwd=str(Path(__file__).resolve().parents[1]),
+            shell=False, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=300, env=child)
+        (output / "maven.stdout").write_text(result.stdout, encoding="utf-8")
+        (output / "maven.stderr").write_text(result.stderr, encoding="utf-8")
+        if result.returncode != 0:
+            raise FixtureError()
+        evidence = _read_json(output / "probe-result.json")
+        _object(evidence, ("probe", "durationMs", "receiptClass", "assertionsPassed"))
+        if (evidence["probe"] != request["probe"] or type(evidence["assertionsPassed"]) is not bool
+                or evidence["assertionsPassed"] is not True
+                or evidence["receiptClass"] not in ("COMPLETED", "REJECTED", "UNKNOWN", "NOT_APPLICABLE")):
+            raise FixtureError()
+        _integer(evidence["durationMs"])
+        _atomic_json(output / "launch.json", {"status": "COMPLETED", "probe": request["probe"]})
+        return _reply("probe", probeEvidence=evidence)
+    except Exception as error:
+        if output is not None:
+            if isinstance(error, subprocess.TimeoutExpired):
+                for name, partial in (("maven.stdout", error.stdout), ("maven.stderr", error.stderr)):
+                    if partial is not None:
+                        (output / name).write_text(partial.decode("utf-8", errors="replace")
+                            if isinstance(partial, bytes) else partial, encoding="utf-8")
+            _atomic_json(output / "launch.json", {"status": "ERROR", "probe": request["probe"],
+                "errorCategory": "FIXTURE_ERROR", "exceptionClass": type(error).__name__})
+        return _error("probe")
 
 
 class Journal:
@@ -632,6 +794,8 @@ def prepare(request: dict, environment: dict[str, str]) -> dict:
             if adapter is None:
                 raise FixtureError()
             adapter.preflight(environment)
+        if environment.get("AFTER_SALES_EVAL_DB_TEST") == "true":
+            _clock_preflight(environment)
         _base_url(environment)
         trial.parent.mkdir(parents=True, exist_ok=True)
         trial.mkdir()  # Exclusive claim: no second caller can recreate this trial.
@@ -670,6 +834,8 @@ def serve(input_stream, output_stream, environment: dict[str, str]) -> None:
             elif op == "oracle":
                 projection = oracle(str(_relative_ledger(request, environment)), request["terminalEvidence"], environment)
                 reply = _reply(op, oracle=projection)
+            elif op == "probe":
+                reply = probe(request, environment)
             else:
                 reply = _error(op)
         except Exception:
@@ -703,6 +869,9 @@ def main(argv=None):
     parser.add_argument("--output-root", required=True)
     parser.add_argument("--demo-catalog", help="Committed logical demo catalog path")
     parser.add_argument("--demo-manifest", help="Ignored local logical-key to product-ID allowlist path")
+    parser.add_argument("--mysql-exe", help="Native mysql executable when absent from PATH")
+    parser.add_argument("--java-home", help="Probe JDK directory; JDK 22 is the validated runtime")
+    parser.add_argument("--maven-exe", help="Native Maven launcher path, including paths with spaces")
     args = parser.parse_args(argv)
     try:
         environment = load_environment(args.env_file)
@@ -711,6 +880,10 @@ def main(argv=None):
             environment["AFTER_SALES_EVAL_DEMO_CATALOG"] = args.demo_catalog
         if args.demo_manifest:
             environment["AFTER_SALES_EVAL_DEMO_MANIFEST"] = args.demo_manifest
+        for value, key in ((args.mysql_exe, "MYSQL_EXE"), (args.java_home, "JAVA_HOME"),
+                           (args.maven_exe, "AFTER_SALES_EVAL_MAVEN_EXE")):
+            if value:
+                environment[key] = value
         serve(sys.stdin, sys.stdout, environment)
         return 0
     except Exception:

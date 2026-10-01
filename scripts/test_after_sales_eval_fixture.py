@@ -581,7 +581,7 @@ class FixtureTests(unittest.TestCase):
         self.assertNotIn("UNRELATED_SECRET", env)
         self.assertEqual("8", env["AFTER_SALES_EVAL_CATEGORY_ID"])
 
-    def test_environment_loader_adds_only_database_and_native_runtime_keys(self):
+    def test_environment_loader_adds_only_helper_database_and_test_runtime_keys(self):
         path = self.root / "private.env"
         path.write_text('SPRING_DATASOURCE_URL=jdbc:mysql://localhost/mall\nSPRING_DATASOURCE_USERNAME=root\n'
             'SPRING_DATASOURCE_PASSWORD=private-db-password\nMYSQL_EXE="D:/MySQL/MySQL Server 8.0/bin/mysql.exe"\n'
@@ -591,7 +591,8 @@ class FixtureTests(unittest.TestCase):
         self.assertEqual("native-path", env["PATH"])
         self.assertEqual("C:/Windows", env["SystemRoot"])
         self.assertNotIn("MODEL_API_KEY", env)
-        self.assertNotIn("MERCHANT_JWT_SECRET", env)
+        # Task 4 needs this only inside the helper's opt-in backend test JVM.
+        self.assertEqual("signing-secret", env["MERCHANT_JWT_SECRET"])
         self.assertNotIn("MYSQL_PWD", env)
 
 
