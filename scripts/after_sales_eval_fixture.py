@@ -3,7 +3,8 @@
 Private files live beneath the configured output root. A trial directory is
 claimed once; incomplete or uncertain writes never trigger automatic recreation,
 even after process restart. The helper does not sign merchant tokens or execute
-SQL/shell. Database age/oracle and transaction probes are subsequent task hooks.
+SQL/shell. Database age/oracle use a separate restricted adapter; transaction
+probes remain a subsequent task hook.
 """
 
 import argparse
@@ -32,7 +33,9 @@ PROBES = {"ROLLBACK_AFTER_INSERT", "CONCURRENT_IDEMPOTENCY", "LEGACY_PENDING", "
 ENV_KEYS = {"SUPERMALL_BASE_URL", "DEMO_MERCHANT_TOKEN", "DEMO_MERCHANT_USERNAME",
             "DEMO_MERCHANT_PASSWORD", "AFTER_SALES_EVAL_OUTPUT_ROOT",
             "AFTER_SALES_EVAL_CATEGORY_ID", "AFTER_SALES_EVAL_DEMO_CATALOG",
-            "AFTER_SALES_EVAL_DEMO_MANIFEST"}
+            "AFTER_SALES_EVAL_DEMO_MANIFEST", "SPRING_DATASOURCE_URL",
+            "SPRING_DATASOURCE_USERNAME", "SPRING_DATASOURCE_PASSWORD", "MYSQL_EXE",
+            "PATH", "SystemRoot", "SYSTEMROOT", "WINDIR", "TEMP", "TMP"}
 
 
 class FixtureError(Exception):
@@ -338,7 +341,7 @@ def _db_adapter():
 
 
 def age_order(ledgerPath, orderAlias, ageSeconds, environment):
-    """Task 3 extension point; no SQL exists in the Task 2 implementation."""
+    """Delegate fixture-owned age adjustment to the restricted private adapter."""
     adapter = _db_adapter()
     if adapter is None:
         raise FixtureError()
@@ -349,7 +352,7 @@ _DEFAULT_AGE_ORDER = age_order
 
 
 def oracle(ledgerPath, terminalEvidence, environment):
-    """Task 3 extension point, currently unsupported with a fixed wire error."""
+    """Return a closed, complete projection without private business identity."""
     adapter = _db_adapter()
     if adapter is None:
         raise FixtureError()
@@ -358,6 +361,8 @@ def oracle(ledgerPath, terminalEvidence, environment):
     if projection["terminalEvidence"] != terminalEvidence or not isinstance(projection["orders"], dict):
         raise FixtureError()
     declared = _read_json(ledgerPath)["orders"]
+    if set(projection["orders"]) != set(declared):
+        raise FixtureError()
     for alias, order in projection["orders"].items():
         if alias not in declared:
             raise FixtureError()
@@ -551,15 +556,16 @@ def _prepare_claimed(request, environment, trial, ledger_path, ledger, prices, a
                 if status in ("RECEIVED", "REFUNDED"):
                     journal.write(alias, "RECEIVE", "PUT", base + "/receive", token, validate=lambda data: _void(data))
         if order["ageSeconds"]:
-            age_order(str(ledger_path), alias, order["ageSeconds"], environment)
-            # The restricted adapter records backend-time evidence in this same
-            # private file. Keep Journal's object identity, but refresh its data
-            # so subsequent API receipts cannot overwrite the adapter evidence.
-            refreshed = _read_json(ledger_path)
-            if any(refreshed.get(k) != ledger[k] for k in ("runId", "caseId", "trialId", "fixtureHash")):
-                raise FixtureError()
-            ledger.clear()
-            ledger.update(refreshed)
+            try:
+                age_order(str(ledger_path), alias, order["ageSeconds"], environment)
+            finally:
+                # Keep Journal's object identity and preserve adapter evidence
+                # even when a changed age or backend-time check fails.
+                refreshed = _read_json(ledger_path)
+                if any(refreshed.get(k) != ledger[k] for k in ("runId", "caseId", "trialId", "fixtureHash")):
+                    raise FixtureError()
+                ledger.clear()
+                ledger.update(refreshed)
         if order["existingRefund"] == "PENDING":
             journal.write(alias, "LEGACY_REFUND", "POST", base + "/refund", token,
                           {"reason": "Evaluation legacy pending fixture"}, lambda data: _void(data))
@@ -618,12 +624,14 @@ def prepare(request: dict, environment: dict[str, str]) -> dict:
             if previous["status"] in ("UNKNOWN", "PREPARED"):
                 return _reply("prepare", "UNKNOWN", ledgerPath=relative, errorCategory="FIXTURE_CREATION_UNKNOWN")
             return _error("prepare")
-        # Refuse age-dependent fixtures before any API work until Task 3 plugs in
-        # the restricted ledger-aware hook. Tests substitute this hook explicitly.
+        # An age-dependent fixture needs a configured database and the actual
+        # refund uniqueness guard before any business creation is sent.
         if (age_order is _DEFAULT_AGE_ORDER
-                and any(o["ageSeconds"] for o in request["fixture"]["orders"].values())
-                and _db_adapter() is None):
-            raise FixtureError()
+                and any(o["ageSeconds"] for o in request["fixture"]["orders"].values())):
+            adapter = _db_adapter()
+            if adapter is None:
+                raise FixtureError()
+            adapter.preflight(environment)
         _base_url(environment)
         trial.parent.mkdir(parents=True, exist_ok=True)
         trial.mkdir()  # Exclusive claim: no second caller can recreate this trial.

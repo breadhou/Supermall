@@ -371,7 +371,8 @@ class FixtureTests(unittest.TestCase):
     def test_missing_age_backend_rejects_before_business_creation(self):
         req = request()
         req["fixture"]["orders"]["order-a"]["ageSeconds"] = 864000
-        reply = helper.prepare(req, self.environment)
+        with patch.object(helper, "_db_adapter", return_value=None):
+            reply = helper.prepare(req, self.environment)
         self.assertEqual("ERROR", reply["status"])
         self.assertEqual([], self.api.calls)
 
@@ -385,7 +386,9 @@ class FixtureTests(unittest.TestCase):
             path.write_text(json.dumps(ledger))
         adapter.age_order = record_age
         adapter.preflight = lambda env: {"ready": True}
-        adapter.oracle = lambda path, terminal, env: {"orders": {}, "terminalEvidence": terminal}
+        adapter.oracle = lambda path, terminal, env: {"orders": {"order-a": {
+            "orderStatus": "RECEIVED", "paidAmount": "39.80", "refundRows": [], "ownerMatches": True}},
+            "terminalEvidence": terminal}
         req = request()
         req["fixture"]["orders"]["order-a"]["ageSeconds"] = 864000
         with patch.dict("sys.modules", after_sales_eval_db=adapter):
@@ -398,7 +401,44 @@ class FixtureTests(unittest.TestCase):
             wire.update(op="oracle", ledgerPath=reply["ledgerPath"], terminalEvidence="UNKNOWN")
             helper.serve(io.StringIO(json.dumps(wire) + "\n"), output, self.environment)
             self.assertEqual({"schemaVersion": 1, "op": "oracle", "status": "COMPLETED",
-                              "oracle": {"orders": {}, "terminalEvidence": "UNKNOWN"}}, json.loads(output.getvalue()))
+                              "oracle": {"orders": {"order-a": {"orderStatus": "RECEIVED", "paidAmount": "39.80",
+                                  "refundRows": [], "ownerMatches": True}}, "terminalEvidence": "UNKNOWN"}}, json.loads(output.getvalue()))
+
+    def test_age_failure_preserves_adapter_private_evidence(self):
+        adapter = types.ModuleType("after_sales_eval_db")
+        adapter.preflight = lambda env: {"ready": True}
+        def fail_age(path, alias, seconds, env):
+            ledger = json.loads(path.read_text())
+            ledger["ageEvidence"] = {alias: {"status": "ERROR", "errorCategory": "FIXTURE_ERROR",
+                "backendTimeAfter": "2026-10-01T10:00:00"}}
+            path.write_text(json.dumps(ledger))
+            raise helper.FixtureError()
+        adapter.age_order = fail_age
+        req = request()
+        req["fixture"]["orders"]["order-a"]["ageSeconds"] = 864000
+        with patch.dict("sys.modules", after_sales_eval_db=adapter):
+            reply = helper.prepare(req, self.environment)
+        self.assertEqual("ERROR", reply["status"])
+        ledger = json.loads((self.root / "run-001/NORMAL-001/trial-001/ledger.json").read_text())
+        self.assertEqual("FIXTURE_ERROR", ledger["ageEvidence"]["order-a"]["errorCategory"])
+
+    def test_age_database_readiness_failure_precedes_business_creation(self):
+        adapter = types.ModuleType("after_sales_eval_db")
+        adapter.preflight = lambda env: (_ for _ in ()).throw(helper.FixtureError())
+        req = request()
+        req["fixture"]["orders"]["order-a"]["ageSeconds"] = 864000
+        with patch.dict("sys.modules", after_sales_eval_db=adapter):
+            reply = helper.prepare(req, self.environment)
+        self.assertEqual("ERROR", reply["status"])
+        self.assertEqual([], self.api.calls)
+
+    def test_adapter_oracle_requires_every_declared_order_alias(self):
+        prepared = helper.prepare(request(), self.environment)
+        adapter = types.ModuleType("after_sales_eval_db")
+        adapter.oracle = lambda path, terminal, env: {"orders": {}, "terminalEvidence": terminal}
+        with patch.dict("sys.modules", after_sales_eval_db=adapter):
+            with self.assertRaises(helper.FixtureError):
+                helper.oracle(self.root / prepared["ledgerPath"], "UNKNOWN", self.environment)
 
     def test_adapter_oracle_cannot_export_raw_ids_or_unknown_fields(self):
         prepared = helper.prepare(request(), self.environment)
@@ -508,7 +548,8 @@ class FixtureTests(unittest.TestCase):
                     dict(other, op="oracle", ledgerPath="../private.env", terminalEvidence="NOT_SENT"),
                     dict(other, op="shutdown")]
         output = io.StringIO()
-        helper.serve(io.StringIO("\n".join(json.dumps(c) for c in commands + [prepare]) + "\n"), output, self.environment)
+        with patch.object(helper, "_db_adapter", return_value=None):
+            helper.serve(io.StringIO("\n".join(json.dumps(c) for c in commands + [prepare]) + "\n"), output, self.environment)
         replies = [json.loads(line) for line in output.getvalue().splitlines()]
         self.assertEqual(6, len(replies))
         self.assertEqual(["COMPLETED", "COMPLETED", "ERROR", "ERROR", "ERROR", "COMPLETED"], [r["status"] for r in replies])
@@ -539,6 +580,19 @@ class FixtureTests(unittest.TestCase):
         self.assertNotIn("MODEL_API_KEY", env)
         self.assertNotIn("UNRELATED_SECRET", env)
         self.assertEqual("8", env["AFTER_SALES_EVAL_CATEGORY_ID"])
+
+    def test_environment_loader_adds_only_database_and_native_runtime_keys(self):
+        path = self.root / "private.env"
+        path.write_text('SPRING_DATASOURCE_URL=jdbc:mysql://localhost/mall\nSPRING_DATASOURCE_USERNAME=root\n'
+            'SPRING_DATASOURCE_PASSWORD=private-db-password\nMYSQL_EXE="D:/MySQL/MySQL Server 8.0/bin/mysql.exe"\n'
+            'MERCHANT_JWT_SECRET=signing-secret\nMODEL_API_KEY=model-secret\nMYSQL_PWD=untrusted-other-password\n')
+        env = helper.load_environment(path, {"PATH": "native-path", "SystemRoot": "C:/Windows"})
+        self.assertEqual("private-db-password", env["SPRING_DATASOURCE_PASSWORD"])
+        self.assertEqual("native-path", env["PATH"])
+        self.assertEqual("C:/Windows", env["SystemRoot"])
+        self.assertNotIn("MODEL_API_KEY", env)
+        self.assertNotIn("MERCHANT_JWT_SECRET", env)
+        self.assertNotIn("MYSQL_PWD", env)
 
 
 if __name__ == "__main__":
