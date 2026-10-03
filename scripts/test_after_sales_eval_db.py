@@ -278,22 +278,49 @@ class DatabaseTests(unittest.TestCase):
         self.assertEqual({"orders": {
             "order-a": {"orderStatus": "REFUNDED", "paidAmount": "39.80", "refundRows": [
                 {"status": "REFUNDED", "amount": "39.8000", "ownerMatches": True}], "ownerMatches": True},
-            "order-b": {"orderStatus": "PAID", "paidAmount": "39.8", "refundRows": [], "ownerMatches": True}},
+            "order-b": {"orderStatus": "PAID", "paidAmount": "39.8", "refundRows": [], "ownerMatches": False}},
             "terminalEvidence": "COMPLETED"}, result)
         self.assertEqual(Decimal("39.8"), Decimal(result["orders"]["order-a"]["paidAmount"]))
         self.assertNotIn("900719925474", json.dumps(result))
         self.assertNotIn("private", json.dumps(result))
 
-    def test_foreign_fixture_owner_and_refund_owner_are_compared_to_declared_actor(self):
+    def test_foreign_fixture_owner_and_refund_owner_are_compared_to_active_actor(self):
         self.cli.refunds["9007199254741001"] = [["PENDING", "39.80", "9007199254740994"]]
-        result = db.oracle(self.path, "NOT_SENT", self.env)
-        self.assertTrue(result["orders"]["order-b"]["ownerMatches"])
-        self.assertTrue(result["orders"]["order-b"]["refundRows"][0]["ownerMatches"])
-        self.cli.orders["9007199254741001"]["owner"] = "9007199254740993"
-        self.cli.refunds["9007199254741001"][0][2] = "9007199254740993"
         result = db.oracle(self.path, "NOT_SENT", self.env)
         self.assertFalse(result["orders"]["order-b"]["ownerMatches"])
         self.assertFalse(result["orders"]["order-b"]["refundRows"][0]["ownerMatches"])
+        self.cli.orders["9007199254741001"]["owner"] = "9007199254740993"
+        self.cli.refunds["9007199254741001"][0][2] = "9007199254740993"
+        result = db.oracle(self.path, "NOT_SENT", self.env)
+        self.assertTrue(result["orders"]["order-b"]["ownerMatches"])
+        self.assertTrue(result["orders"]["order-b"]["refundRows"][0]["ownerMatches"])
+
+    def test_oracle_active_actor_switch_and_refund_owner_are_independent(self):
+        self.cli.refunds["9007199254741001"]=[["PENDING","39.80","9007199254740993"]]
+        result=db.oracle(self.path,"NOT_SENT",self.env)
+        self.assertFalse(result['orders']['order-b']['ownerMatches'])
+        self.assertTrue(result['orders']['order-b']['refundRows'][0]['ownerMatches'])
+        self.ledger['fixture']['activeActor']='actor-b'; self.save()
+        result=db.oracle(self.path,"NOT_SENT",self.env)
+        self.assertFalse(result['orders']['order-a']['ownerMatches'])
+        self.assertTrue(result['orders']['order-b']['ownerMatches'])
+        self.assertFalse(result['orders']['order-b']['refundRows'][0]['ownerMatches'])
+
+    def test_oracle_active_actor_requires_declared_identity_and_registration_receipt(self):
+        self.ledger['fixture']['orders'].pop('order-a')
+        self.ledger['orders'].pop('order-a')
+        self.ledger['operations']=[entry for entry in self.ledger['operations'] if not (entry['action']=='ORDER' and entry['alias']=='order-a')]
+        for mutation in ('undeclared','wrong-id','missing-registration'):
+            with self.subTest(mutation=mutation):
+                baseline=copy.deepcopy(self.ledger)
+                if mutation=='undeclared': self.ledger['fixture']['activeActor']='actor-c'
+                if mutation=='wrong-id': self.ledger['actors']['actor-a']['userId']='9007199254740995'
+                if mutation=='missing-registration': self.ledger['operations'].pop(0)
+                self.save()
+                with self.assertRaises(helper.FixtureError): db.oracle(self.path,'NOT_SENT',self.env)
+                self.ledger=baseline
+        self.save()
+        self.assertEqual([],self.cli.calls)
 
     def test_zero_rows_with_unknown_request_is_not_terminal(self):
         for terminal in ("UNKNOWN", "NOT_SENT", "COMPLETED"):
@@ -377,7 +404,8 @@ class DatabaseTests(unittest.TestCase):
             self.assertEqual({"order-a", "order-b"}, set(ledger["ageEvidence"]))
             result = helper.oracle(self.root / reply["ledgerPath"], "UNKNOWN", env)
         self.assertEqual("UNKNOWN", result["terminalEvidence"])
-        self.assertTrue(all(order["ownerMatches"] for order in result["orders"].values()))
+        self.assertTrue(result['orders']['order-a']['ownerMatches'])
+        self.assertFalse(result['orders']['order-b']['ownerMatches'])
         self.assertEqual(2, self.cli.update_count)
 
     def test_helper_wire_exports_actual_oracle_and_keeps_probe_unsupported(self):

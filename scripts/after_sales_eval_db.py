@@ -143,6 +143,14 @@ def _load_ledger(ledger_path, environment):
             raise fixture.FixtureError()
         if not isinstance(ledger["orders"], dict) or not ledger["orders"]:
             raise fixture.FixtureError()
+        active = fixture._pattern(declaration["activeActor"], fixture.ALIAS)
+        if active not in declaration["actors"]:
+            raise fixture.FixtureError()
+        active_id = _id(ledger["actors"][active]["userId"])
+        registrations = [entry for entry in ledger["operations"] if entry.get("action") == "REGISTER"
+                         and entry.get("alias") == active and entry.get("state") == "COMPLETED"]
+        if len(registrations) != 1 or fixture._decimal_id(registrations[0]["receipt"]["data"]["id"]) != active_id:
+            raise fixture.FixtureError()
         seen = set()
         for alias, order in ledger["orders"].items():
             fixture._pattern(alias, fixture.ALIAS)
@@ -259,9 +267,9 @@ def oracle(ledger_path: Path, terminal_evidence: str, environment: dict[str, str
         raise fixture.FixtureError()
     client = _Mysql(environment)
     result = {}
+    active_owner = _id(ledger["actors"][ledger["fixture"]["activeActor"]]["userId"])
     for alias, order in ledger["orders"].items():
         actual = _order(client, order)
-        owner = _id(ledger["actors"][order["owner"]]["userId"])
         evidence = ledger.get("ageEvidence", {}).get(alias)
         if order["requestedAgeSeconds"] and not evidence:
             raise fixture.FixtureError()
@@ -277,8 +285,8 @@ def oracle(ledger_path: Path, terminal_evidence: str, environment: dict[str, str
             if status not in ("PENDING", "REFUNDED"):
                 raise fixture.FixtureError()
             fixture._pattern(amount, fixture.MONEY)
-            projected.append({"status": status, "amount": amount, "ownerMatches": _id(uid) == owner})
+            projected.append({"status": status, "amount": amount, "ownerMatches": _id(uid) == active_owner})
         result[alias] = {"orderStatus": actual["status"], "paidAmount": actual["amount"],
-            "refundRows": projected, "ownerMatches": actual["ownerId"] == owner}
+            "refundRows": projected, "ownerMatches": actual["ownerId"] == active_owner}
     # A temporary absence of rows never downgrades an UNKNOWN submission.
     return {"orders": result, "terminalEvidence": terminal_evidence}
