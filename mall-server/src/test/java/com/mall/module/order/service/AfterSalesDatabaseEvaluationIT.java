@@ -64,7 +64,7 @@ class AfterSalesDatabaseEvaluationIT {
     void loadOwnedFixtureAndMeasureClock() throws Exception {
         started = System.nanoTime();
         probe = System.getenv("AFTER_SALES_EVAL_PROBE");
-        assertTrue(List.of("ROLLBACK_AFTER_INSERT", "CONCURRENT_IDEMPOTENCY", "LEGACY_PENDING", "STALE_POLICY").contains(probe));
+        assertTrue(List.of("ROLLBACK_AFTER_INSERT", "CONCURRENT_IDEMPOTENCY", "LEGACY_PENDING", "STALE_POLICY", "POLICY_WINDOW_FIXED_TIME").contains(probe));
         Path ledgerPath = Path.of(System.getenv("AFTER_SALES_EVAL_LEDGER")).toRealPath();
         output = Path.of(System.getenv("AFTER_SALES_EVAL_OUTPUT")).toRealPath();
         assertEquals(ledgerPath.getParent().resolve("probe-" + probe), output);
@@ -213,6 +213,21 @@ class AfterSalesDatabaseEvaluationIT {
         assertTrue(node.isTextual() || node.isIntegralNumber());
         assertTrue(node.asText().matches("[1-9][0-9]*"));
         return Long.valueOf(node.asText());
+    }
+
+    @Test
+    void policyWindowFixedTime() throws Exception {
+        assertEquals("POLICY_WINDOW_FIXED_TIME", probe);
+        Order fixture = orders.selectById(orderId);
+        assertEquals("RECEIVED", fixture.getStatus());
+        JsonNode persistedBefore = json.valueToTree(fixture);
+        JsonNode refundsBefore = json.valueToTree(actualRefunds());
+        RefundEligibilityEvaluatorFixedTimeTest.assertWindow(
+                RefundEligibilityEvaluatorFixedTimeTest.assessWindow(fixture), expectedAmount);
+        assertEquals(persistedBefore, json.valueToTree(orders.selectById(orderId)));
+        assertEquals(refundsBefore, json.valueToTree(actualRefunds()));
+        assertOrder(beforeStatus);
+        writeEvidence("NOT_APPLICABLE");
     }
 
     private List<Refund> actualRefunds() {

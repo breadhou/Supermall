@@ -20,6 +20,7 @@ METHODS = {
     "CONCURRENT_IDEMPOTENCY": "concurrentIdempotency",
     "LEGACY_PENDING": "legacyPendingDoesNotMeanRefunded",
     "STALE_POLICY": "stalePolicyDoesNotWrite",
+    "POLICY_WINDOW_FIXED_TIME": "policyWindowFixedTime",
 }
 
 
@@ -82,7 +83,7 @@ class ProbeTests(unittest.TestCase):
         output = Path(kwargs["env"]["AFTER_SALES_EVAL_OUTPUT"])
         output.mkdir(parents=True, exist_ok=True)
         evidence = {"probe": probe, "durationMs": 12,
-            "receiptClass": "COMPLETED" if probe == "CONCURRENT_IDEMPOTENCY" else "REJECTED",
+            "receiptClass": "COMPLETED" if probe == "CONCURRENT_IDEMPOTENCY" else "NOT_APPLICABLE" if probe == "POLICY_WINDOW_FIXED_TIME" else "REJECTED",
             "assertionsPassed": True}
         if self.bad_evidence is not None:
             evidence = self.bad_evidence
@@ -143,6 +144,13 @@ class ProbeTests(unittest.TestCase):
         self.assertEqual(str(self.path.resolve()), opts["env"]["AFTER_SALES_EVAL_LEDGER"])
         self.assertNotIn("9007199254740993", json.dumps(result))
         self.assertNotIn("db-secret", json.dumps(result))
+
+    def test_fixed_time_probe_dispatches_only_the_readonly_fixed_method(self):
+        result = self.invoke(self.probe_request('POLICY_WINDOW_FIXED_TIME'))
+        self.assertEqual('COMPLETED', result['status'])
+        self.assertEqual('POLICY_WINDOW_FIXED_TIME', result['probeEvidence']['probe'])
+        self.assertEqual('-Dtest=AfterSalesDatabaseEvaluationIT#policyWindowFixedTime', self.jvm_calls[0][0][4])
+        self.assertTrue(result['probeEvidence']['assertionsPassed'])
 
     def test_unknown_probe_cannot_inject_method_or_native_argument(self):
         for probe in ("OTHER", "ROLLBACK_AFTER_INSERT#anything", "rollbackAfterInsert;whoami"):
