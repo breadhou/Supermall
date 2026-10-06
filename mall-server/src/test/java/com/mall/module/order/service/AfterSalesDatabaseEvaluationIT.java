@@ -45,7 +45,7 @@ import static org.junit.jupiter.api.Assertions.*;
         webEnvironment = SpringBootTest.WebEnvironment.MOCK)
 class AfterSalesDatabaseEvaluationIT {
     private static final String REASON = "Evaluation development transaction probe";
-    private final ObjectMapper json = new ObjectMapper();
+    private final ObjectMapper json = new ObjectMapper().findAndRegisterModules();
     @Autowired private RefundExecutionService execution;
     @Autowired private RefundEligibilityService eligibility;
     @Autowired private OrderMapper orders;
