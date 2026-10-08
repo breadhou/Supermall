@@ -220,16 +220,16 @@ supermall/
 | 阶段八 | 支付物流 | payment_record、logistics | 已完成，真实集成验证 2026-09-18 通过（发货/送达无 HTTP 出口，待阶段九） |
 | 阶段九 | 商家后台 | merchant、admin_user | 已完成（9.1 商家端 + 9.2 管理后台，均通过真实环境验证） |
 
-## 测试报告基线（2026-09-30）
+## 测试报告基线（2026-10-09）
 
-阶段 3 主线合并后，在 `878ac93` 使用 JDK 22 重新运行完整 `mvn test`，退出 0、`BUILD SUCCESS`。本次新生成的 Surefire 报告汇总为 **243 个测试，38 个测试类，0 失败 / 0 错误 / 0 跳过**。
+阶段4后端评测能力按用户授权快进合并main，源码25e7afb。使用JDK22执行Maven离线 `-pl mall-server -am test`，真实退出0、BUILD SUCCESS；本次新生成Surefire共244测试、39类、0失败/错误/跳过。后端Python71通过，未启动真实模型/业务探针。Agent仓库集成记录为docs/phase4-main-integration-2026-10-09.md。
 
 | 模块 | 测试数 | 测试类 |
 |------|--------|--------|
 | mall-common | 10 | 1 |
 | mall-security | 16 | 3 |
 | mall-infra | 6 | 2 |
-| mall-server | 211 | 32 |
+| mall-server | 212 | 33 |
 
 执行方式（本机 `mvn` 不在 PATH）：
 
@@ -320,4 +320,4 @@ MyBatis-Plus 配置了逻辑删除字段 `deleted`（`0`=未删除，`1`=已删�
 
 | 项目 | 位置 | 关系 |
 |---|---|---|
-| **after-sales-agent** | `D:\sourcecode\after-sales-agent` | 售后决策与执行 Agent，通过 **MCP** 调用本项目的能力，不直连数据库。计划 A/B/C 与阶段 3A/3B 已验收；售后能力及阶段 3A 后端版本校验已集成到本仓库 main，Agent/MCP 已集成到其 main。阶段 4 评测待讨论 |
+| **after-sales-agent** | `D:\sourcecode\after-sales-agent` | 售后决策与执行 Agent，通过 **MCP** 调用本项目的能力，不直连数据库。计划 A/B/C 与阶段 3A/3B 已验收；售后能力及阶段 3A 后端版本校验已集成到本仓库 main，Agent/MCP 已集成到其 main。阶段4评测辅助能力已于2026-10-09按用户授权集成main；两仓源码验收与正式部分结果保持区分，详见Agent仓库docs/phase4-main-integration-2026-10-09.md |
